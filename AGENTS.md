@@ -19,6 +19,16 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Engine: openpyxl primary, xlwings documented stub, swappable behind `WorkbookIO` in `bridge/excel_io.py`.
 - Design contract (design worker): `design.design_members(materials, members, member_forces) -> [{"as_req", "as_prov", "stirrup_spacing"}]`; `member_forces` are `(axial, shear, m_i, m_j)` sliced from solver 6-vectors in `bridge/run.py`.
 
+## Design package conventions (design/)
+
+- All units are SI: MPa, mm, N (kN*m, kN for Mu/Vu inputs).
+- Codes: ACI 318-19 provisions are cited per function; NSCP 2015 is ACI 318-08/11 lineage, so its section numbers differ (equivalences noted in comments).
+- `design_beam(Mu_kNm, Vu_kN, b, d, d_prime, fc, fy, ...)` is the plain-value entry point; the solver/bridge never passes objects into design.
+- `design_members(materials, members, member_forces)` is the bridge adapter matching the pinned contract in docs/excel-bridge-architecture.md sec. 8: materials arrive in kN/m^2 (divide by 1000 to get MPa), and the section is derived from the member's A/I as the equivalent rectangle (h = sqrt(12I/A), b = A/h) with default cover 60 mm.
+- Rebar table is SI diameters (10-36 mm) in `design/flexure.py:BAR_DIAMETERS_MM`.
+- Python 3.9: no `X | None` annotations without `from __future__ import annotations`; builtin generics (`tuple[...]`) are fine.
+- Sanity check: `python3 -m design.sanity_check` from the repo root.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
