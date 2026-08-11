@@ -125,9 +125,9 @@ TABLES: Tuple[Table, ...] = (
         direction="out",
         columns=(
             Column("Node ID", "OUT_REAC_NODE_ID", "id"),
-            Column("Fx (N)", "OUT_REAC_FX"),
-            Column("Fy (N)", "OUT_REAC_FY"),
-            Column("Mz (N*m)", "OUT_REAC_MZ"),
+            Column("Fx (kN)", "OUT_REAC_FX"),
+            Column("Fy (kN)", "OUT_REAC_FY"),
+            Column("Mz (kN*m)", "OUT_REAC_MZ"),
         ),
     ),
     Table(
@@ -135,10 +135,10 @@ TABLES: Tuple[Table, ...] = (
         direction="out",
         columns=(
             Column("Member ID", "OUT_MF_MEMBER_ID", "id"),
-            Column("Axial (N)", "OUT_MF_AXIAL"),
-            Column("Shear (N)", "OUT_MF_SHEAR"),
-            Column("Moment i-end (N*m)", "OUT_MF_M_I"),
-            Column("Moment j-end (N*m)", "OUT_MF_M_J"),
+            Column("Axial (kN)", "OUT_MF_AXIAL"),
+            Column("Shear (kN)", "OUT_MF_SHEAR"),
+            Column("Moment i-end (kN*m)", "OUT_MF_M_I"),
+            Column("Moment j-end (kN*m)", "OUT_MF_M_J"),
         ),
     ),
     Table(
