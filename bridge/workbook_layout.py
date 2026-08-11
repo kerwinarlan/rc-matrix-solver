@@ -8,6 +8,8 @@ Conventions encoded here:
 * One header row per table; data starts on the row below (``data_row``).
 * Every data column maps to a named range: ``<GROUP>_<QUANTITY>`` for inputs,
   ``OUT_<GROUP>_<QUANTITY>`` for outputs. Column names are globally unique.
+* Units: kN, m, kN/m^2 (1 MPa = 1000 kN/m^2) - matches the solver's unit
+  contract; values pass through the bridge unmodified.
 * Input tables carry a count named range ``<GROUP>_COUNT`` whose value sits in
   ``count_cell`` (a plain number, maintained by the user for Excel-side
   formulas). The Python reader ignores counts and scans until the first blank
@@ -75,7 +77,7 @@ TABLES: Tuple[Table, ...] = (
             Column("Member ID", "MEMBER_ID", "id"),
             Column("I-Node ID", "MEMBER_I_NODE", "id"),
             Column("J-Node ID", "MEMBER_J_NODE", "id"),
-            Column("E (Pa)", "MEMBER_E"),
+            Column("E (kN/m^2)", "MEMBER_E"),
             Column("A (m^2)", "MEMBER_A"),
             Column("I (m^4)", "MEMBER_I"),
         ),
@@ -85,9 +87,9 @@ TABLES: Tuple[Table, ...] = (
         direction="in", count_name="LOAD_N_COUNT", count_cell="I1",
         columns=(
             Column("Node ID", "LOAD_NODE", "id"),
-            Column("Fx (N)", "LOAD_N_FX"),
-            Column("Fy (N)", "LOAD_N_FY"),
-            Column("Mz (N*m)", "LOAD_N_MZ"),
+            Column("Fx (kN)", "LOAD_N_FX"),
+            Column("Fy (kN)", "LOAD_N_FY"),
+            Column("Mz (kN*m)", "LOAD_N_MZ"),
         ),
     ),
     Table(
@@ -95,17 +97,16 @@ TABLES: Tuple[Table, ...] = (
         direction="in", count_name="LOAD_U_COUNT", count_cell="I6",
         columns=(
             Column("Member ID", "LOAD_MEMBER", "id"),
-            Column("wx (N/m)", "LOAD_U_WX"),
-            Column("wy (N/m)", "LOAD_U_WY"),
+            Column("w (kN/m, downward +)", "LOAD_U_W"),
         ),
     ),
     Table(
         sheet="Inputs-Materials", title="Material inputs", start_row=1, start_col=1,
         direction="in", count_name="MATERIAL_COUNT", count_cell="I1",
         columns=(
-            Column("fc' (Pa)", "MATERIAL_FC"),
-            Column("fy (Pa)", "MATERIAL_FY"),
-            Column("Es (Pa)", "MATERIAL_ES"),
+            Column("fc' (kN/m^2)", "MATERIAL_FC"),
+            Column("fy (kN/m^2)", "MATERIAL_FY"),
+            Column("Es (kN/m^2)", "MATERIAL_ES"),
         ),
     ),
     # --- Outputs ----------------------------------------------------------

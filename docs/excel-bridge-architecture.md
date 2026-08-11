@@ -78,8 +78,9 @@ tables stacked vertically (nodal loads at rows 1+, member UDLs at rows 6+).
 Readers stop at the first blank row in the table band, so a user can add rows
 freely; counts are Excel-side metadata only (section 5).
 
-Units: SI base units in inputs (m, N, Pa), design outputs in mm^2 and mm as
-civil engineers expect. Restraint columns take 1 = fixed, 0 = free.
+Units: SI-based but with forces in kN, moments in kN*m, stresses in kN/m^2
+(1 MPa = 1000 kN/m^2) - the solver's unit contract; values pass through the
+bridge unmodified. Restraint columns take 1 = fixed, 0 = free.
 
 ### Inputs-Node  (count: NODE_COUNT)
 
@@ -99,7 +100,7 @@ civil engineers expect. Restraint columns take 1 = fixed, 0 = free.
 | A | Member ID | MEMBER_ID | id |
 | B | I-Node ID | MEMBER_I_NODE | id |
 | C | J-Node ID | MEMBER_J_NODE | id |
-| D | E (Pa) | MEMBER_E | number |
+| D | E (kN/m^2) | MEMBER_E | number |
 | E | A (m^2) | MEMBER_A | number |
 | F | I (m^4) | MEMBER_I | number |
 
@@ -113,27 +114,28 @@ Nodal loads (count: LOAD_N_COUNT), header row 1:
 | Col | Header | Named range | Kind |
 |---|---|---|---|
 | A | Node ID | LOAD_NODE | id |
-| B | Fx (N) | LOAD_N_FX | number |
-| C | Fy (N) | LOAD_N_FY | number |
-| D | Mz (N*m) | LOAD_N_MZ | number |
+| B | Fx (kN) | LOAD_N_FX | number |
+| C | Fy (kN) | LOAD_N_FY | number |
+| D | Mz (kN*m) | LOAD_N_MZ | number |
 
 Member UDLs (count: LOAD_U_COUNT), header row 6, data row 7:
 
 | Col | Header | Named range | Kind |
 |---|---|---|---|
 | A | Member ID | LOAD_MEMBER | id |
-| B | wx (N/m) | LOAD_U_WX | number |
-| C | wy (N/m) | LOAD_U_WY | number |
+| B | w (kN/m, downward +) | LOAD_U_W | number |
 
-Row 5 is intentionally blank to separate the two tables.
+Row 5 is intentionally blank to separate the two tables. The solver implements
+only full-span transverse UDLs (w positive downward), so there is a single
+intensity column; extend the layout here if axial/partial loads are added.
 
 ### Inputs-Materials  (count: MATERIAL_COUNT, usually 1 row)
 
 | Col | Header | Named range | Kind |
 |---|---|---|---|
-| A | fc' (Pa) | MATERIAL_FC | number |
-| B | fy (Pa) | MATERIAL_FY | number |
-| C | Es (Pa) | MATERIAL_ES | number |
+| A | fc' (kN/m^2) | MATERIAL_FC | number |
+| B | fy (kN/m^2) | MATERIAL_FY | number |
+| C | Es (kN/m^2) | MATERIAL_ES | number |
 
 ### Outputs-Displacements
 
@@ -149,19 +151,19 @@ Row 5 is intentionally blank to separate the two tables.
 | Col | Header | Named range | Kind |
 |---|---|---|---|
 | A | Node ID | OUT_REAC_NODE_ID | id |
-| B | Fx (N) | OUT_REAC_FX | number |
-| C | Fy (N) | OUT_REAC_FY | number |
-| D | Mz (N*m) | OUT_REAC_MZ | number |
+| B | Fx (kN) | OUT_REAC_FX | number |
+| C | Fy (kN) | OUT_REAC_FY | number |
+| D | Mz (kN*m) | OUT_REAC_MZ | number |
 
 ### Outputs-MemberForces
 
 | Col | Header | Named range | Kind |
 |---|---|---|---|
 | A | Member ID | OUT_MF_MEMBER_ID | id |
-| B | Axial (N) | OUT_MF_AXIAL | number |
-| C | Shear (N) | OUT_MF_SHEAR | number |
-| D | Moment i-end (N*m) | OUT_MF_M_I | number |
-| E | Moment j-end (N*m) | OUT_MF_M_J | number |
+| B | Axial (kN) | OUT_MF_AXIAL | number |
+| C | Shear (kN) | OUT_MF_SHEAR | number |
+| D | Moment i-end (kN*m) | OUT_MF_M_I | number |
+| E | Moment j-end (kN*m) | OUT_MF_M_J | number |
 
 ### Outputs-Design
 
@@ -210,15 +212,17 @@ python3 bridge/run.py [--workbook rc_matrix_solver.xlsx]
    (`build_template` from `workbook_layout.py`).
 2. `read_inputs()` - scan the four input tables to a flat dict keyed by
    named range, e.g. `{"NODE_X": [0.0, 5.0], ...}`.
-3. `solver.build_frame(nodes, members, loads)` then `solver.solve_frame(frame)`.
-4. `design.design_members(materials, members, solution.member_forces)`.
+3. Build the frame from the input dicts (`_build_frame`: user ids map to
+   solver node/member indices) and call `solver.solve(frame)`.
+4. If `design/` has landed, call `design.design_members(materials, members,
+   member_forces)`; otherwise skip it and report design as pending.
 5. `write_outputs({...})` - flatten results into named output dicts; the
    writer clears the output band first so a shorter run never leaves stale
    numbers.
 
-Before `solver/` and `design/` land, steps 3-4 print "not ready" and the run
-completes as a no-op. This is the acceptance baseline: `python3 bridge/run.py`
-never crashes while the parallel workers are mid-flight.
+If `solver/` is missing, the run prints "not ready" and completes as a no-op;
+if only `design/` is missing, the analysis outputs are still written. This is
+why `python3 bridge/run.py` never crashes while the parallel workers land.
 
 The solve runs as a batch script: open the workbook, solve, save, close. The
 user then opens/reloads the workbook to see outputs. This is the openpyxl path.
@@ -267,40 +271,43 @@ class WorkbookIO(Protocol):
 - Self-check: `python3 -m bridge.excel_io` builds a template and asserts a
   full read/write round-trip.
 
-## 8. Assumed solver/design API (contract for parallel workers)
+## 8. Solver/design API contract
 
-`solver/` and `design/` are built in parallel on other branches. This section
-pins the API `run.py` calls; those workers should match it. Minor mismatches
-are reconciled by the firstmate at merge time - the guarded imports and the
-API-mismatch guard in `run.py` keep every state runnable.
-
-### solver (module `solver`, in `solver/`)
+### solver (module `solver`, in `solver/`) - landed, consumed directly
 
 ```python
-def build_frame(nodes: list[dict], members: list[dict], loads: dict) -> Frame
-def solve_frame(frame: Frame) -> Solution
+frame = solver.Frame(
+    nodes=[solver.Node(x, y), ...],                       # x, y in m
+    members=[solver.Member(i, j, solver.Section(E, A, I)), ...],  # indices, not ids
+    supports={node_index: solver.Support(ux=True, uy=True, rz=True), ...},
+    nodal_loads={node_index: solver.NodalLoad(fx, fy, mz), ...},    # kN, kN*m
+    member_loads={member_index: [solver.UDL(w=w)], ...},            # kN/m, downward +
+)
+solution = solver.solve(frame)
 ```
 
-- `nodes`: `[{"id": int, "x": float, "y": float,
-  "sup_ux": int, "sup_uy": int, "sup_rz": int}, ...]` (restraints 1=fixed/0=free).
-- `members`: `[{"id": int, "i_node": int, "j_node": int,
-  "E": float, "A": float, "I": float}, ...]` (SI base units).
-- `loads`: `{"nodal": [{"node": int, "fx": float, "fy": float, "mz": float}],
-  "udl": [{"member": int, "wx": float, "wy": float}]}`.
-- `Solution` attributes (input order):
-  - `displacements`: per node `(ux, uy, rz)`
-  - `reactions`: per node `(fx, fy, mz)`
-  - `member_forces`: per member `(axial, shear, m_i, m_j)`
+Units: kN, m, kN/m^2 (1 MPa = 1000 kN/m^2). Node and member ids in the
+workbook are user ids; the bridge maps them to list indices when building the
+frame (`_build_frame` in `run.py`).
 
-### design (module `design`, in `design/`)
+- `solution.u`: flat numpy array, (ux, uy, rz) per node in node order;
+  restrained dofs are zero.
+- `solution.reactions`: `{node_index: (rx, ry, mz)}`, supported nodes only.
+- `solution.member_forces`: `{member_index: [N_i, V_i, M_i, N_j, V_j, M_j]}`,
+  local end forces on the member.
+
+### design (module `design`, in `design/`) - contract to match
 
 ```python
 def design_members(materials: dict, members: list[dict],
                    member_forces: list[tuple]) -> list[dict]
 ```
 
-- `materials`: `{"fc": float, "fy": float, "es": float}` (Pa).
-- `members` / `member_forces`: same shapes as solver above.
+- `materials`: `{"fc": float, "fy": float, "es": float}` (kN/m^2).
+- `members`: `[{"id": int, "i_node": int, "j_node": int,
+  "E": float, "A": float, "I": float}, ...]` (user ids).
+- `member_forces`: per member, input order, `(axial, shear, m_i, m_j)` sliced
+  from the solver's 6-vector by `_design_forces` in `run.py`.
 - Returns one dict per member, input order:
   `{"as_req": float, "as_prov": float, "stirrup_spacing": float}`
   (mm^2, mm^2, mm).
@@ -312,9 +319,9 @@ def design_members(materials: dict, members: list[dict],
 - Output row ordering is positional (row i in = row i out). If solver/design
   ever reorder or filter rows, the id columns become the join key; update
   `_assemble_outputs` accordingly.
-- The API-mismatch guard catches `AttributeError` only; a solver that imports
-  but fails on a missing dependency currently reports "not ready". Tighten
-  when the parallel workers land.
+- `run.py` treats `AttributeError`/`TypeError` from the solver/design calls as
+  API mismatches (exit 2) and `ValueError` from the solve as a model error
+  (exit 1). Revisit once `design/` lands and the contracts stabilize.
 - Excel-side polish (number formats, conditional formatting for
   over-utilization) is deferred; `build_template` keeps headers and freeze
   panes only.

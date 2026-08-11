@@ -12,6 +12,13 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - UDL w is positive downward (local -y). Member end forces reported are forces on the member; flip sign for forces on joints.
 - Sanity check: `python3 solver/example.py` (propped cantilever, cantilever column, diagonal member), all assertions at 1e-6 relative tolerance.
 
+## Excel bridge (bridge/)
+
+- Frontend is Excel, calculation is Python: run `python3 bridge/run.py [--workbook ...]` (generates a starter template on first run).
+- Layout source of truth: `bridge/workbook_layout.py` (sheets, columns, named ranges); full design in `docs/excel-bridge-architecture.md`.
+- Engine: openpyxl primary, xlwings documented stub, swappable behind `WorkbookIO` in `bridge/excel_io.py`.
+- Design contract (design worker): `design.design_members(materials, members, member_forces) -> [{"as_req", "as_prov", "stirrup_spacing"}]`; `member_forces` are `(axial, shear, m_i, m_j)` sliced from solver 6-vectors in `bridge/run.py`.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
