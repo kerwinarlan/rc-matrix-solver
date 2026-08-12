@@ -151,6 +151,23 @@ def demo() -> None:
     assert abs(out2[1]["as_req"] - 440.0) < TOL * 440.0
     assert out2[1]["stirrup_spacing"] > 0.0
 
+    # fy at es*EPS_CU (600 MPa) would make the strain-compatibility curve
+    # degenerate (eps_y = eps_cu): rejected as ValueError, never a divide by
+    # zero, and the bridge fallback row stays labeled COLUMN.
+    try:
+        design_column(1000.0, 50.0, 400.0, 400.0, 28.0, 600.0)
+        raise AssertionError("fy = 600 MPa must raise ValueError")
+    except ValueError:
+        pass
+    bad_col = design_members(
+        {"fc": 28_000.0, "fy": 600_000.0, "es": 200_000_000.0},
+        [{"id": 1, "i_node": 1, "j_node": 2, "E": 2e10, "A": 0.16, "I": 0.002133,
+          "i_x": 0.0, "i_y": 0.0, "j_x": 0.0, "j_y": 5.0}],
+        [(100.0, 10.0, 20.0, 20.0)],
+    )
+    assert bad_col[0]["type"] == "COLUMN" and not bad_col[0]["ok"]
+    assert bad_col[0]["as_req"] == 0.0 and bad_col[0]["phi_pn_kn"] == 0.0
+
     print("All design sanity checks passed.")
 
 

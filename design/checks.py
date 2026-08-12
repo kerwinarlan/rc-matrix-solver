@@ -158,7 +158,11 @@ def design_members(
                     fc=fc, fy=fy, es=es, d_prime=cover_mm,
                 )
             except ValueError:
-                out.append({"as_req": 0.0, "as_prov": 0.0, "stirrup_spacing": 0.0})
+                out.append({
+                    "as_req": 0.0, "as_prov": 0.0, "stirrup_spacing": 0.0,
+                    "type": "COLUMN", "pu_kn": forces[0], "phi_pn_kn": 0.0,
+                    "phi_mn_knm": 0.0, "util": 0.0, "ok": False,
+                })
                 continue
             phi_pn_kn = result.phi_pn_max / 1e3
             phi_mn_knm = result.phi_mn_at_pu / 1e6
