@@ -1,11 +1,51 @@
-# RC Matrix Solver
+<div align="center">
+
+# 🏗️ RC Matrix Solver
+
+**Excel-driven reinforced concrete analysis and design**
+
+[![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![NumPy](https://img.shields.io/badge/NumPy-013243?logo=numpy&logoColor=white)](https://numpy.org)
+[![openpyxl](https://img.shields.io/badge/openpyxl-217346?logo=microsoftexcel&logoColor=white)](https://openpyxl.readthedocs.io)
+[![ACI 318](https://img.shields.io/badge/ACI%20318%20%2F%20NSCP%202015-B31B1B?logo=codesandbox&logoColor=white)](https://www.concrete.org)
+
+</div>
 
 An Excel-driven Reinforced Concrete Matrix Solver and Design tool. Excel is the
 frontend for inputs and outputs. Python is the calculation engine: a 2D frame
 Direct Stiffness Method (DSM) structural analysis, followed by reinforced
-concrete beam design to NSCP 2015 / ACI 318.
+concrete member design (beams and columns) to NSCP 2015 / ACI 318.
 
-```
+---
+
+## Table of Contents
+
+- [Why it exists: engineers live in Excel](#why-it-exists-engineers-live-in-excel)
+- [Project Overview](#project-overview)
+- [Repository layout](#repository-layout)
+- [Setup & Usage](#setup--usage)
+- [Units and code provisions](#units-and-code-provisions)
+- [The Agentic Workflow](#the-agentic-workflow)
+- [Status](#status)
+
+---
+
+## Why it exists: engineers live in Excel
+
+Structural engineers do their day-to-day work in Excel workbooks, not
+terminals - yet frame analysis and RC design tools live in Python. This tool
+closes that gap: the workbook is the interface, Python is the engine, and one
+`.xlsx` file carries the full analysis-and-design loop.
+
+| Problem | Solution | Result |
+|---|---|---|
+| Engineers work in Excel, solvers live in the terminal | Excel named ranges are the input/output contract, never fragile cell coordinates | A workbook in, displacements and designs out |
+| Frame analysis and RC design are separate tools | Direct Stiffness Method solver + ACI 318 / NSCP 2015 design in one pipeline | Complete analysis-and-design loop from one file |
+| Batch runs and live sessions need different engines | Swappable openpyxl (headless) / xlwings (interactive) bridge | Headless CI runs and live Excel sessions both work |
+
+---
+
+## Project Overview
 ┌─────────────────────────────────────────────┐
 │  Excel workbook (.xlsx)                     │
 │  Inputs sheets: nodes, members, loads,      │
@@ -62,7 +102,7 @@ analysis-and-design loop from one Excel file.
   engine for live Excel sessions. The workbook layout and named-range scheme
   are defined once in `bridge/workbook_layout.py`, the single source of truth.
 
-### Repository layout
+## Repository layout
 
 ```
 rc-matrix-solver/
@@ -218,6 +258,18 @@ Solver's so the repository keeps one shared `AGENTS.md`.
 Every branch was reviewed before landing, every worker was cleaned up after
 its task, and the queue was kept current throughout. The result is a fully
 functional repository whose history records the whole agentic process.
+
+### After the build: column design extension
+
+Column design was added after the firstmate build as a standalone extension
+(commit `0ed3ab5`), outside the workflow above: `design/column.py`
+implements ACI 318-19 / NSCP 2015 axial-load P-M interaction for tied
+rectangular columns, `design_members` routes near-vertical members to it,
+and the `Outputs-Design` sheet gained Pu, phi*Pn, phi*Mn and utilization
+columns. The demo column now designs at 1963 mm^2 (4-25 mm bars) with
+10 mm ties at 390 mm - the 912 mm^2 figure in the execution log above was
+the beam-logic output the integration agent produced before column design
+existed.
 
 ---
 
