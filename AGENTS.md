@@ -7,6 +7,15 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Solver core (solver/)
 
 - Calculation core: 2D frame Direct Stiffness Method, 3 dof per node (ux, uy, rz).
+- `solver/modal.py`: undamped free-vibration mode shapes via lumped masses.
+  Lumped translational mass = half of each member's rho*A*L per end node
+  (density in t/m^3: concrete 2.4, steel 7.85); zero-mass rotational dofs are
+  Guyan-condensed; `mode_shapes(frame, density, nmodes)` returns
+  [(freq_hz, full_dof_vector), ...] ascending, normalized to max |component| = 1,
+  with rotations recovered. Self-check: `python3 -m solver.modal` (closed-form
+  lumped cantilever / SS-beam frequencies). Note: lumped masses underestimate
+  the continuous-beam fundamental by ~30% for cantilevers - fine for shapes,
+  document the model when frequencies matter.
 - API contract: build a `Frame` (nodes, members, sections, supports, loads), call `solve(frame)`, read `Solution.u` (displacements), `.reactions` (dict node -> (rx, ry, mz)), `.member_forces` (local end forces, acting ON the member).
 - Units contract (mandatory): forces kN, lengths m, E in kN/m^2 (1 MPa = 1000 kN/m^2), A in m^2, I in m^4, UDL in kN/m. See solver/__init__.py.
 - UDL w is positive downward (local -y). Member end forces reported are forces on the member; flip sign for forces on joints.
@@ -15,7 +24,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## GUIs (gui/)
 
 - `frame_gui.py`: FreeSimpleGUI desktop frontend for the demo propped L-frame; `solve_lframe()` is the single source of truth for that frame model and returns reactions, member forces, node coords, raw displacements, w, fx.
-- `web_app.py`: browser frontend (stdlib http.server only, embedded HTML/SVG/JS) reusing `solve_lframe`; two tabs - demo L-frame inputs and a generic JSON model (`solve_model`: any nodes/members/supports/loads, returns a JSON-safe result with a global equilibrium check; UDL total force = w*(dy,-dx)); `--check` runs both paths through the real HTTP handler headlessly.
+- `web_app.py`: browser frontend (stdlib http.server only, embedded HTML/SVG/JS) reusing `solve_lframe`; two tabs - demo L-frame inputs and a generic JSON model (`solve_model`: any nodes/members/supports/loads, returns a JSON-safe result with a global equilibrium check; UDL total force = w*(dy,-dx)). Both responses carry a `modes` list [{freq, u}] (lumped-mass modal, density passed per request, default 2.4 t/m^3). The page adds a deformation slider + sweep play button, drag-to-load arrows (delta-per-pixel: fx/fy 1 kN/px, mz 2 kN*m/px, UDL 0.5 kN/m per px), and M1-M3 mode buttons that animate the mode shapes (harmonic motion, loads hidden). `--check` runs both paths through the real HTTP handler headlessly.
+- JSON-tab drags mutate a JS-side `jsonModel` (synced to the textarea on pointerup); the textarea input event invalidates it. The SS-beam preset uses 3 nodes (a 2-node lumped model would lump all bending mass onto restrained supports and show only axial modes).
 
 ## Excel bridge (bridge/)
 

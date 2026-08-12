@@ -37,11 +37,13 @@ DEFAULTS = {
 
 
 def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
-                 a_beam: float, i_beam: float, w: float, fx: float) -> dict:
+                 a_beam: float, i_beam: float, w: float, fx: float,
+                 density: float = 2.4) -> dict:
     """Solve the propped L-frame; return reactions, member forces, equilibrium.
 
     Geometry: N1 (0,0) fixed; column up to N2 (0,h); beam to N3 (l,h) roller.
     Loads: UDL w on the beam, lateral push fx at N2. Units: kN, m.
+    density (t/m^3) feeds the lumped-mass mode shapes returned as "modes".
     """
     values = {
         "h": h, "l": l, "e": e, "a_col": a_col, "i_col": i_col,
@@ -63,6 +65,14 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         member_loads={1: [UDL(w=w)]},
     )
     sol = solve(frame)
+    try:
+        from solver.modal import mode_shapes
+
+        mode_list = [
+            {"freq": f, "u": [float(v) for v in uu]} for f, uu in mode_shapes(frame, density)
+        ]
+    except ValueError:
+        mode_list = []
     rx, ry, mz = sol.reactions[0]
     ry_roller = sol.reactions[2][1]
     n_col, v_col, m_col_i = sol.member_forces[0][0], sol.member_forces[0][1], sol.member_forces[0][2]
@@ -89,6 +99,7 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         "member_forces": {k: [float(v) for v in vals] for k, vals in sol.member_forces.items()},
         "eq": {"fx": sum_fx, "fy": sum_fy, "m": sum_m,
                "ok": bool(abs(sum_fx) < 1e-6 and abs(sum_fy) < 1e-6 and abs(sum_m) < 1e-6)},
+        "modes": mode_list,
     }
 
 

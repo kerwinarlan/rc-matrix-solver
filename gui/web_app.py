@@ -7,9 +7,16 @@ Serves one page (embedded HTML) with two tabs:
   nodal loads, member UDLs - solved by the Direct Stiffness Method.
 
 Both render the same way: loading animation, deformed-shape figure (SVG,
-drawn animated, displacements magnified), reaction/member-force cards, and a
-global equilibrium cross-check. The web server itself uses only the Python
-standard library; the frame solver may have its own numerical dependencies.
+animated, displacements magnified), reaction/member-force cards, and a
+global equilibrium cross-check. On top of that:
+
+- Deformation slider + play button sweep the deflection from 0 to full.
+- Load arrows are draggable (live re-solve while you pull).
+- Mode buttons animate the lumped-mass mode shapes (solver/modal.py),
+  labeled with their natural frequency in Hz; material density feeds them.
+
+The web server itself uses only the Python standard library; the frame
+solver may have its own numerical dependencies.
 
 Run:  python3 gui/web_app.py        (opens http://127.0.0.1:8000)
 Self-check:  python3 gui/web_app.py --check   (headless, no browser)
@@ -38,6 +45,7 @@ except ModuleNotFoundError as exc:
         raise
     from frame_gui import DEFAULTS, solve_lframe
 from solver import Frame, Member, NodalLoad, Node, Section, Support, UDL, solve
+from solver.modal import mode_shapes
 
 #: Input keys in the same order/signature as solve_lframe.
 FIELDS = [
@@ -53,12 +61,13 @@ FIELDS = [
 ]
 
 
-def solve_model(model: dict) -> dict:
+def solve_model(model: dict, density: float = 2.4) -> dict:
     """Solve an arbitrary 2D frame from the JSON model spec; JSON-safe result.
 
     Spec: {"nodes": [[x,y]...], "members": [{"i","j","E","A","I"}...],
     "supports": {i: [ux,uy,rz]}, "nodal_loads": {i: [fx,fy,mz]},
     "member_loads": {i: [w...]}}  (units kN, m as in the solver).
+    density (t/m^3) feeds the lumped-mass modal analysis returned as "modes".
     """
     if not isinstance(model, dict):
         raise ValueError("model must be a JSON object")
@@ -137,7 +146,15 @@ def solve_model(model: dict) -> dict:
             raise ValueError(f"UDLs on member {idx} must be a list")
         member_l[idx] = [UDL(w=finite(w, f"UDL on member {idx}")) for w in v]
 
-    sol = solve(Frame(nodes, members, supports, nodal, member_l))
+    frame = Frame(nodes, members, supports, nodal, member_l)
+    sol = solve(frame)
+
+    try:
+        mode_list = [
+            {"freq": f, "u": [float(v) for v in uu]} for f, uu in mode_shapes(frame, density)
+        ]
+    except ValueError:
+        mode_list = []  # no free mass or no free dofs: not a vibrating structure
 
     # Global equilibrium: reactions + nodal loads + UDL resultants, with
     # moments about the origin. UDL total force is w*(dy, -dx) for a member
@@ -173,6 +190,7 @@ def solve_model(model: dict) -> dict:
         "reactions": {k: [float(v) for v in vals] for k, vals in sol.reactions.items()},
         "member_forces": {k: [float(v) for v in vals] for k, vals in sol.member_forces.items()},
         "eq": {"fx": ex, "fy": ey, "m": em, "ok": bool(abs(ex) < 1e-6 and abs(ey) < 1e-6 and abs(em) < 1e-6)},
+        "modes": mode_list,
     }
 
 
@@ -228,6 +246,15 @@ PAGE = """<!doctype html>
   .eq.bad { background:#fef2f2; border:1px solid #fecaca; }
   .cap { font-size:12px; color:var(--mut); margin-top:8px; }
   .err { color:var(--bad); font-size:13px; margin-top:8px; min-height:16px; }
+  .ctrlrow { display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .clabel { font-size:12px; color:var(--mut); white-space:nowrap; }
+  input[type="range"] { flex:1; min-width:90px; accent-color:var(--acc); }
+  .mini { padding:5px 10px; font-size:12px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; color:var(--ink); }
+  .mini:hover:not(:disabled) { border-color:var(--acc); }
+  .mini:disabled { opacity:.5; cursor:default; }
+  .mini.active { background:var(--acc); color:#fff; border-color:var(--acc); }
+  .noanim .deformed { stroke-dashoffset:0; }
+  .noanim .deformed, .noanim .fade { animation:none !important; }
 </style>
 </head>
 <body>
@@ -276,6 +303,15 @@ PAGE = """<!doctype html>
       <div class="spinner" id="spin"><div class="ring"></div><div>Solving frame...</div></div>
       <svg id="fig" viewBox="0 0 640 420" role="img" aria-label="frame figure"></svg>
     </div>
+    <div class="ctrlrow">
+      <span class="clabel">Deformation</span>
+      <input type="range" id="def-slider" min="0" max="100" value="100" title="Deformation scale (0 = undeformed)">
+      <button id="play-def" class="mini" title="Sweep the deformation from 0 to full">▶</button>
+      <span class="clabel">Modes</span>
+      <button id="mode-1" class="mini" disabled>M1</button>
+      <button id="mode-2" class="mini" disabled>M2</button>
+      <button id="mode-3" class="mini" disabled>M3</button>
+    </div>
     <div class="cap" id="cap"></div>
     <div class="results" id="results"></div>
     <div class="eq" id="eq" hidden></div>
@@ -309,10 +345,15 @@ function arrowHead(parent) {
     defs);
   el("path", {d:"M0,0 L10,5 L0,10 z", fill:"#1c2733"}, defs);
 }
-function arrow(x1,y1,x2,y2,parent,cls) {
+function arrow(x1,y1,x2,y2,parent,cls,data) {
   const a = el("line", {x1,y1,x2,y2,stroke:"#1c2733","stroke-width":2.5,markerEnd:"url(#ah)"}, parent);
   if (cls) a.setAttribute("class", cls);
+  if (data) a.setAttribute("data-drag", data);
   return a;
+}
+function hit(x1,y1,x2,y2,data,parent) {
+  // invisible fat line: makes the drag targets easy to grab
+  el("line", {x1,y1,x2,y2,stroke:"transparent","stroke-width":16,"data-drag":data,style:"cursor:grab"}, parent);
 }
 function momentArrow(px, py, val, parent, cls) {
   // Curly arrow for a moment about z: 270-degree arc. Positive Mz (model
@@ -367,22 +408,26 @@ function label(x, y, txt, parent, cls, anchor) {
 }
 function fmt(v) { return Number(v).toLocaleString(undefined, {maximumFractionDigits: 3}); }
 
-function render(res) {
+function render(res, opts = {}) {
+  const anim = opts.anim !== false;
   fig.innerHTML = "";
+  fig.classList.toggle("noanim", !anim);
   arrowHead(fig);
-  const nodes = res.nodes, u = res.u;
+  const nodes = res.nodes, u = opts.u || res.u;
   const xs = nodes.map(n => n[0]), ys = nodes.map(n => n[1]);
   const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
   const s = Math.min((W - PADL - PADR) / Math.max(xmax - xmin, 1e-9), (H - PADT - PADB) / Math.max(ymax - ymin, 1e-9));
+  window._lastS = s;
   const X = (x, y) => PADL + (x - xmin) * s, Y = (x, y) => H - PADB - (y - ymin) * s;
   const P = nodes.map(n => ({x: X(n[0], n[1]), y: Y(n[0], n[1])}));
 
-  // displacement magnification: biggest |ux|,|uy| maps to ~30% of the smaller span
+  // deformation scale: mode animation passes its own; static = auto mag x slider
   const dmax = Math.max(...nodes.map((n, i) => Math.max(Math.abs(u[3*i]), Math.abs(u[3*i+1]))), 1e-30);
   const mag = dmax > 1e-12 ? 0.3 * Math.min(xmax - xmin || 1, ymax - ymin || 1) / dmax : 0;
+  const scale = opts.u ? opts.scale : mag * (defSlider ? +defSlider.value : 100) / 100;
   const D = nodes.map((n, i) => ({
-    x: P[i].x + s * mag * u[3*i],
-    y: P[i].y - s * mag * u[3*i+1]
+    x: P[i].x + s * scale * u[3*i],
+    y: P[i].y - s * scale * u[3*i+1]
   }));
 
   // members: soft base, dashed centerline, animated deformed
@@ -408,7 +453,7 @@ function render(res) {
     const rz = u[3*i+2] || 0;
     const p = D[i];
     el("circle", {cx:p.x, cy:p.y, r:3.5, fill:"#2563eb", stroke:"#fff", "stroke-width":1}, fig);
-    if (Math.abs(rz) < 1e-9) continue;
+    if (opts.hideLoads || Math.abs(rz) < 1e-9) continue;
     const r0 = 10, sw = rz > 0 ? 1 : 0;
     el("path", {d:`M${p.x+r0},${p.y} A${r0},${r0} 0 0 ${sw} ${p.x},${p.y + (sw ? r0 : -r0)}`,
       fill:"none", stroke:"#dc2626", "stroke-width":2, markerEnd:"url(#ah)"}, fig);
@@ -426,7 +471,7 @@ function render(res) {
   }
 
   // member UDLs: arrows along the local -y side (positive w = downward)
-  for (const mi in res.member_loads) {
+  if (!opts.hideLoads) for (const mi in res.member_loads) {
     const [i,j] = members[+mi];
     const wsum = res.member_loads[mi].reduce((a,b) => a + b, 0);
     const dx = nodes[j][0] - nodes[i][0], dy = nodes[j][1] - nodes[i][1], L = Math.hypot(dx, dy) || 1;
@@ -443,7 +488,8 @@ function render(res) {
       arrow(tail.x, tail.y, bx + ax/al*14, by + ay/al*14, fig, "fade");
     }
     el("polyline", {points: tails.map(t => `${t.x},${t.y}`).join(" "),
-      fill:"none", stroke:"#1c2733", "stroke-width":1.5, class:"fade"}, fig);
+      fill:"none", stroke:"#1c2733", "stroke-width":1.5, class:"fade", "data-drag":"udl|"+mi}, fig);
+    hit(tails[0].x, tails[0].y, tails[tails.length-1].x, tails[tails.length-1].y, "udl|"+mi, fig);
     const mx = nodes[i][0] + dx/2, my = nodes[i][1] + dy/2;
     const bx = X(mx, my), by = Y(mx, my);
     const ax = X(mx + vx, my + vy) - bx, ay = Y(mx + vx, my + vy) - by;
@@ -452,27 +498,31 @@ function render(res) {
   }
 
   // nodal loads: arrows with the head at the node, pointing in the load direction
-  for (const k in res.nodal_loads) {
+  if (!opts.hideLoads) for (const k in res.nodal_loads) {
     const [fx, fy, mz] = res.nodal_loads[k];
     const p = P[+k];
     if (fx) {
       const d = fx > 0 ? 1 : -1;
-      arrow(p.x - d*34, p.y, p.x - d*6, p.y, fig, "fade");
+      arrow(p.x - d*34, p.y, p.x - d*6, p.y, fig, "fade", "fx|" + k);
+      hit(p.x - d*34, p.y, p.x - d*6, p.y, "fx|" + k, fig);
       label(p.x - d*40, p.y - 8, `Fx=${fmt(fx)}`, fig, "fade", d > 0 ? "end" : "start");
     }
     if (fy) {
       const d = fy > 0 ? 1 : -1;
-      arrow(p.x, p.y - d*34, p.x, p.y - d*6, fig, "fade");
+      arrow(p.x, p.y - d*34, p.x, p.y - d*6, fig, "fade", "fy|" + k);
+      hit(p.x, p.y - d*34, p.x, p.y - d*6, "fy|" + k, fig);
       label(p.x + 6, p.y - d*40, `Fy=${fmt(fy)}`, fig, "fade");
     }
     if (mz) {
-      momentArrow(p.x, p.y, mz, fig, "fade");
+      const arc = momentArrow(p.x, p.y, mz, fig, "fade");
+      arc.setAttribute("data-drag", "mz|" + k);
+      hit(p.x - 26, p.y, p.x + 26, p.y, "mz|" + k, fig);
       label(p.x + 8, p.y - 26, `Mz=${fmt(mz)}`, fig, "fade");
     }
   }
 
   // reactions: arrows anchored at the support node, pointing in the reaction direction
-  for (const k in res.reactions) {
+  if (!opts.hideLoads) for (const k in res.reactions) {
     const [rx, ry, mz] = res.reactions[k];
     const p = P[+k];
     if (rx) {
@@ -521,7 +571,7 @@ function render(res) {
   eq.className = "eq " + (ok ? "ok" : "bad");
   eq.textContent = (ok ? "OK - " : "NOT BALANCED - ") +
     `equilibrium: sum Fx = ${res.eq.fx.toExponential(2)}, sum Fy = ${res.eq.fy.toExponential(2)}, sum M = ${res.eq.m.toExponential(2)}`;
-  document.getElementById("cap").textContent =
+  if (!opts.u) document.getElementById("cap").textContent =
     `Blue = deformed shape, ${mag > 0 ? "deformation scale x" + fmt(mag) : "no visible displacement"}. ` +
     `White dots = original nodes, blue dots = displaced, triangles = supports, ` +
     `straight arrows = forces, curly arrows = moments, red arcs = joint rotation θ.`;
@@ -560,23 +610,24 @@ document.getElementById("load-demo").addEventListener("click", () => {
   const model = JSON.parse(JSON.stringify(DEMO_MODEL));
   if (model.members) for (const m of model.members) m.E = parseFloat(matSel.value);
   document.getElementById("model").value = JSON.stringify(model, null, 2);
+  jsonModel = model;
 });
 
-// structure presets + material selector (E in kN/m^2)
+// structure presets + material selector (E in kN/m^2, density in t/m^3)
 const MATERIALS = [
-  {name:"Concrete fc'=21 MPa (Ec 21.5 GPa)", E:21.5e6},
-  {name:"Concrete fc'=28 MPa (Ec 25 GPa)", E:25e6},
-  {name:"Concrete fc'=35 MPa (Ec 28 GPa)", E:28e6},
-  {name:"Steel (E 200 GPa)", E:200e6},
+  {name:"Concrete fc'=21 MPa (Ec 21.5 GPa)", E:21.5e6, density:2.4},
+  {name:"Concrete fc'=28 MPa (Ec 25 GPa)", E:25e6, density:2.4},
+  {name:"Concrete fc'=35 MPa (Ec 28 GPa)", E:28e6, density:2.4},
+  {name:"Steel (E 200 GPa)", E:200e6, density:7.85},
 ];
 const STRUCTURES = {
   "Propped L-frame": {demo:{h:5,l:6,e:25e6,a_col:0.16,i_col:0.002133,a_beam:0.15,i_beam:0.003125,w:20,fx:30}},
   "Column (fixed base, free top)": {model:{nodes:[[0,0],[0,5]],
     members:[{i:0,j:1,E:25e6,A:0.16,I:0.002133}],
     supports:{0:[true,true,true]}, nodal_loads:{1:[30,0,0]}}},
-  "Simply supported beam": {model:{nodes:[[0,0],[6,0]],
-    members:[{i:0,j:1,E:25e6,A:0.15,I:0.003125}],
-    supports:{0:[true,true,false],1:[false,true,false]}, member_loads:{0:[20]}}},
+  "Simply supported beam": {model:{nodes:[[0,0],[3,0],[6,0]],
+    members:[{i:0,j:1,E:25e6,A:0.15,I:0.003125},{i:1,j:2,E:25e6,A:0.15,I:0.003125}],
+    supports:{0:[true,true,false],2:[false,true,false]}, member_loads:{0:[20],1:[20]}}},
   "Cantilever beam": {model:{nodes:[[0,0],[6,0]],
     members:[{i:0,j:1,E:25e6,A:0.15,I:0.003125}],
     supports:{0:[true,true,true]}, member_loads:{0:[20]}}},
@@ -584,7 +635,7 @@ const STRUCTURES = {
 const matSel = document.getElementById("material");
 for (const m of MATERIALS) {
   const o = document.createElement("option");
-  o.value = m.E; o.textContent = m.name;
+  o.value = m.E; o.textContent = m.name; o.dataset.density = m.density;
   matSel.appendChild(o);
 }
 matSel.value = String(25e6);   // default fc'=28
@@ -601,6 +652,7 @@ function loadStructure(name) {
     const model = JSON.parse(JSON.stringify(s.model));
     applyMaterialToModel(model);
     document.getElementById("model").value = JSON.stringify(model, null, 2);
+    jsonModel = model;
     setTab("json");
   }
 }
@@ -612,30 +664,171 @@ matSel.addEventListener("change", () => {
     if (model && model.members) {
       applyMaterialToModel(model);
       document.getElementById("model").value = JSON.stringify(model, null, 2);
+      jsonModel = model;
     }
   } catch (e) { /* textarea empty or invalid JSON: leave as-is */ }
 });
+document.getElementById("model").addEventListener("input", () => { jsonModel = null; });
 
-async function solve() {
+// ---------- interaction: deformation sweep, mode-shape animation, drag-to-load ----------
+let lastRes = null, lastModes = [], playRAF = null, modeAnim = null, dragging = null, jsonModel = null, solveSeq = 0;
+const defSlider = document.getElementById("def-slider");
+const modeBtns = [1, 2, 3].map(i => document.getElementById("mode-" + i));
+function stopPlay() { if (playRAF) { cancelAnimationFrame(playRAF); playRAF = null; } }
+function stopMode() {
+  if (!modeAnim) return;
+  modeAnim.btn.classList.remove("active");
+  modeAnim = null;
+  if (lastRes) render(lastRes, {anim:false});
+}
+function matDensity() { return +matSel.options[matSel.selectedIndex].dataset.density || 2.4; }
+
+// deformation sweep: slider + play button (ramps 0 -> full deflection)
+defSlider.addEventListener("input", () => { if (lastRes && !playRAF) render(lastRes, {anim:false}); });
+document.getElementById("play-def").addEventListener("click", () => {
+  stopMode();
+  if (playRAF) { stopPlay(); return; }
+  const t0 = performance.now(), dur = 1200;
+  const step = t => {
+    const k = Math.min((t - t0) / dur, 1);
+    defSlider.value = Math.round(k * 100);
+    if (lastRes) render(lastRes, {anim:false});
+    playRAF = k < 1 ? requestAnimationFrame(step) : null;
+  };
+  playRAF = requestAnimationFrame(step);
+});
+
+// mode-shape animation: undamped harmonic motion at the mode frequency
+function modeScale(u) {
+  if (!lastRes) return 0.1;
+  const xs = lastRes.nodes.map(n => n[0]), ys = lastRes.nodes.map(n => n[1]);
+  const span = Math.min(Math.max(...xs) - Math.min(...xs) || 1, Math.max(...ys) - Math.min(...ys) || 1);
+  return 0.2 * span / Math.max(...u.map(Math.abs), 1e-9);
+}
+function playMode(i) {
+  stopPlay();
+  const m = lastModes[i];
+  if (!m) return;
+  stopMode();
+  const btn = modeBtns[i];
+  btn.classList.add("active");
+  modeAnim = {u: m.u, freq: m.freq, scale: modeScale(m.u), t0: performance.now(), btn};
+  requestAnimationFrame(tickMode);
+}
+function tickMode(t) {
+  if (!modeAnim) return;
+  const s = Math.sin(2 * Math.PI * modeAnim.freq * (t - modeAnim.t0) / 1000);
+  render(lastRes, {u: modeAnim.u, scale: modeAnim.scale * s, anim:false, hideLoads:true});
+  requestAnimationFrame(tickMode);
+}
+modeBtns.forEach((b, i) => b.addEventListener("click", () => playMode(i)));
+
+// drag-to-load: grab a force arrow (or the UDL row) and pull
+function getJsonModel() {
+  if (jsonModel === null) {
+    try { jsonModel = JSON.parse(document.getElementById("model").value); }
+    catch (e) { return null; }
+  }
+  return jsonModel;
+}
+function loadValue(axis, node) {
+  if (activeTab === "demo") {
+    if (axis === "fx" && +node === 1) return collect().fx;
+    return null;
+  }
+  const m = getJsonModel();
+  const l = m && (m.nodal_loads || {})[node];
+  return l ? l[axis === "fx" ? 0 : axis === "fy" ? 1 : 2] : null;
+}
+function udlValue(member) {
+  if (activeTab === "demo") return +document.getElementById("in-w").value;
+  const m = getJsonModel();
+  const l = m && (m.member_loads || {})[member];
+  return l ? l[0] : null;
+}
+function setLoad(axis, node, v) {
+  if (activeTab === "demo") {
+    const el0 = document.getElementById(axis === "fx" ? "in-fx" : axis === "fy" ? "in-fy" : "in-mz");
+    if (el0) el0.value = v;
+    return;
+  }
+  const m = getJsonModel();
+  if (!m) return;
+  m.nodal_loads = m.nodal_loads || {};
+  m.nodal_loads[node] = m.nodal_loads[node] || [0, 0, 0];
+  m.nodal_loads[node][axis === "fx" ? 0 : axis === "fy" ? 1 : 2] = v;
+}
+function setUdl(member, v) {
+  if (activeTab === "demo") { document.getElementById("in-w").value = v; return; }
+  const m = getJsonModel();
+  if (!m) return;
+  m.member_loads = m.member_loads || {};
+  m.member_loads[member] = [v];
+}
+fig.addEventListener("pointerdown", e => {
+  const t = e.target.closest("[data-drag]");
+  if (!t) return;
+  stopPlay(); stopMode();
+  const [kind, id] = t.dataset.drag.split("|");
+  const base = kind === "udl" ? udlValue(id) : loadValue(kind, id);
+  if (base === null) return;
+  dragging = {kind, id, sx: e.clientX, sy: e.clientY, base};
+  fig.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+fig.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  const dx = e.clientX - dragging.sx, dy = e.clientY - dragging.sy;
+  let v;
+  if (dragging.kind === "udl") v = Math.max(0, Math.min(200, dragging.base - dy * 0.5));
+  else if (dragging.kind === "fx") v = Math.max(-200, Math.min(200, dragging.base + dx));
+  else if (dragging.kind === "fy") v = Math.max(-200, Math.min(200, dragging.base - dy));
+  else v = Math.max(-500, Math.min(500, dragging.base + dx * 2));  // mz
+  if (dragging.kind === "udl") setUdl(dragging.id, v); else setLoad(dragging.kind, dragging.id, v);
+  solve(true);
+});
+fig.addEventListener("pointerup", () => {
+  if (dragging && activeTab !== "demo" && jsonModel) {
+    document.getElementById("model").value = JSON.stringify(jsonModel, null, 2);
+  }
+  dragging = null;
+});
+fig.addEventListener("pointercancel", () => { dragging = null; });
+
+
+async function solve(fromDrag = false) {
+  stopMode();
   const err = document.getElementById("err"); err.textContent = "";
+  const density = matDensity();
   let body;
   if (activeTab === "demo") {
     const v = collect();
     for (const [k] of FIELDS) if (!isFinite(v[k])) { err.textContent = "Enter numbers only."; return; }
-    body = JSON.stringify(v);
+    body = JSON.stringify(Object.assign(v, {density}));
   } else {
-    try { body = JSON.stringify({model: JSON.parse(document.getElementById("model").value)}); }
-    catch (e) { err.textContent = "Invalid JSON: " + e.message; return; }
+    const m = getJsonModel();
+    if (!m) { err.textContent = "Invalid JSON in the model box."; return; }
+    body = JSON.stringify({model: m, density});
   }
+  const seq = ++solveSeq;
   const spin = document.getElementById("spin"); spin.classList.add("show");
   const t0 = performance.now();
   try {
     const r = await fetch("/solve", {method:"POST", headers:{"Content-Type":"application/json"}, body});
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "solve failed");
-    const wait = Math.max(0, 500 - (performance.now() - t0));  // keep the loading animation visible
-    await new Promise(res => setTimeout(res, wait));
-    render(data);
+    if (!fromDrag) {
+      const wait = Math.max(0, 500 - (performance.now() - t0));  // keep the loading animation visible
+      await new Promise(res => setTimeout(res, wait));
+    }
+    if (seq !== solveSeq) return;  // a newer solve started: drop this stale result
+    lastRes = data;
+    render(data, {anim: !fromDrag});
+    lastModes = data.modes || [];
+    lastModes.forEach((m, i) => {
+      const b = modeBtns[i];
+      if (b) { b.textContent = `M${i+1} ${m.freq.toFixed(2)}Hz`; b.disabled = false; }
+    });
   } catch (e) {
     err.textContent = "Error: " + e.message;
   } finally {
@@ -671,8 +864,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length) or b"{}")
+            density = float(payload.get("density", 2.4))
+            if not math.isfinite(density) or density <= 0:
+                raise ValueError("density must be a positive number (t/m^3)")
             if "model" in payload:
-                body = json.dumps(solve_model(payload["model"])).encode("utf-8")
+                body = json.dumps(solve_model(payload["model"], density)).encode("utf-8")
             else:
                 vals = {}
                 for key in ("h", "l", "e", "a_col", "i_col", "a_beam", "i_beam", "w", "fx"):
@@ -682,7 +878,7 @@ class Handler(BaseHTTPRequestHandler):
                     vals[key] = v
                 if any(vals[k] <= 0 for k in ("h", "l", "e", "a_col", "i_col", "a_beam", "i_beam")):
                     raise ValueError("height, span, E, A and I must be positive")
-                body = json.dumps(solve_lframe(**vals)).encode("utf-8")
+                body = json.dumps(solve_lframe(**vals, density=density)).encode("utf-8")
             self._send(200, "application/json", body)
         except (KeyError, ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
             self._send(400, "application/json",
@@ -734,6 +930,11 @@ def _check():
     assert res["eq"]["ok"] and abs(res["eq"]["m"]) < 1e-6, "demo not balanced"
     assert len(res["u"]) == 9 and len(res["nodes"]) == 3
     assert set(res["member_forces"]) == {"0", "1"}
+    # modal: 3 modes, ascending positive frequencies
+    assert len(res["modes"]) == 3, "demo should have 3 modes"
+    freqs = [m["freq"] for m in res["modes"]]
+    assert all(f > 0 for f in freqs) and freqs == sorted(freqs), "frequencies must be positive ascending"
+    assert len(res["modes"][0]["u"]) == 9, "mode vector covers all 9 dofs"
 
     # custom-model endpoint: same frame expressed as JSON
     custom = {
@@ -751,6 +952,7 @@ def _check():
     res2 = json.loads(post(custom).read())
     assert res2["eq"]["ok"] and abs(res2["eq"]["m"]) < 1e-6, "custom model not balanced"
     assert abs(res2["reactions"]["0"][2] - 110.2941900998947) < 1e-6, "custom mz mismatch"
+    assert res2["modes"] and res2["modes"][0]["freq"] > 0, "custom model modes missing"
 
     # page contains the tab markup
     assert b'id="tab-json"' in urllib.request.urlopen(base + "/").read()
