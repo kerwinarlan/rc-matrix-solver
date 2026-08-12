@@ -6,21 +6,30 @@ Direct Stiffness Method (DSM) structural analysis, followed by reinforced
 concrete beam design to NSCP 2015 / ACI 318.
 
 ```
-Excel workbook (.xlsx)
-   |  Inputs sheets: nodes, members, loads, materials
-   v
-Python bridge (bridge/)
-   |  reads named ranges, builds the model
-   v
-solver/  ->  design/
-   2D frame DSM      ACI 318 / NSCP 2015
-   displacements     beam flexure + shear
-   reactions         required rebar, stirrups
-   member forces
-   |  writes results back to Outputs sheets
-   v
-Excel workbook (.xlsx)
-   Outputs sheets: displacements, reactions, member forces, design
+┌─────────────────────────────────────────────┐
+│  Excel workbook (.xlsx)                     │
+│  Inputs sheets: nodes, members, loads,      │
+│  materials                                  │
+└──────────────────────┬──────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────┐
+│  Python bridge (bridge/)                    │
+│  reads named ranges, builds the model       │
+└──────────────────────┬──────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────┐
+│  solver/ ──────────►  design/               │
+│  2D frame DSM          ACI 318 / NSCP 2015  │
+│  displacements         beam flexure + shear │
+│  reactions             required rebar,      │
+│  member forces         stirrups             │
+└──────────────────────┬──────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────┐
+│  Excel workbook (.xlsx)                     │
+│  Outputs sheets: displacements, reactions,  │
+│  member forces, design                      │
+└─────────────────────────────────────────────┘
 ```
 
 ---
