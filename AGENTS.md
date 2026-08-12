@@ -18,7 +18,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - End-to-end demo: `python3 bridge/run.py --workbook examples/rc_matrix_solver_demo.xlsx` (committed pre-filled workbook; regenerate with `python3 examples/build_demo.py`). Quickstart in `examples/README.md` and the main README.
 - Layout source of truth: `bridge/workbook_layout.py` (sheets, columns, named ranges); full design in `docs/excel-bridge-architecture.md`.
 - Engine: openpyxl primary, xlwings documented stub, swappable behind `WorkbookIO` in `bridge/excel_io.py`.
-- Design contract (design worker): `design.design_members(materials, members, member_forces) -> [{"as_req", "as_prov", "stirrup_spacing"}]`; `member_forces` are `(axial, shear, m_i, m_j)` sliced from solver 6-vectors in `bridge/run.py`.
+- Design contract (design worker): `design.design_members(materials, members, member_forces)`; the pinned result shape (extended for columns with type/pu_kn/phi_pn_kn/phi_mn_knm/util/ok) lives in docs/excel-bridge-architecture.md sec. 8. `member_forces` are `(axial, shear, m_i, m_j)` sliced from solver 6-vectors in `bridge/run.py`.
 
 ## Design package conventions (design/)
 

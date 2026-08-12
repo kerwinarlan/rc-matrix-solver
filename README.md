@@ -254,7 +254,8 @@ Solver's so the repository keeps one shared `AGENTS.md`.
    - Demo L-frame: reactions balance applied loads (Fx 30 kN, Fy 120 kN,
      moment 510 kN*m about the base).
    - Beam governed by rho_min: as_req = 440 mm^2 (300x500, d = 440).
-   - Column: as_req ~ 912 mm^2, stirrups from shear.
+   - Column (near-vertical): 4-25 mm bars (Ast = 1963 mm^2) per P-M
+     interaction, 10 mm ties at 390 mm.
    - requirements.txt, quickstart, build_demo.py committed.
 ```
 
@@ -270,9 +271,8 @@ implements ACI 318-19 / NSCP 2015 axial-load P-M interaction for tied
 rectangular columns, `design_members` routes near-vertical members to it,
 and the `Outputs-Design` sheet gained Pu, phi*Pn, phi*Mn and utilization
 columns. The demo column now designs at 1963 mm^2 (4-25 mm bars) with
-10 mm ties at 390 mm - the 912 mm^2 figure in the execution log above was
-the beam-logic output the integration agent produced before column design
-existed.
+10 mm ties at 390 mm - the 912 mm^2 figure in earlier execution logs was
+the beam-logic output produced before column design existed.
 
 ---
 
