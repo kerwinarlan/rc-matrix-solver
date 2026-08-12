@@ -16,6 +16,7 @@ verifies solve_lframe against the demo workbook numbers headlessly (no window).
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -42,6 +43,15 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
     Geometry: N1 (0,0) fixed; column up to N2 (0,h); beam to N3 (l,h) roller.
     Loads: UDL w on the beam, lateral push fx at N2. Units: kN, m.
     """
+    values = {
+        "h": h, "l": l, "e": e, "a_col": a_col, "i_col": i_col,
+        "a_beam": a_beam, "i_beam": i_beam, "w": w, "fx": fx,
+    }
+    if not all(math.isfinite(float(v)) for v in values.values()):
+        raise ValueError("all inputs must be finite numbers")
+    if any(values[k] <= 0 for k in ("h", "l", "e", "a_col", "i_col", "a_beam", "i_beam")):
+        raise ValueError("height, span, E, A and I must be positive")
+
     frame = Frame(
         nodes=[Node(0.0, 0.0), Node(0.0, h), Node(l, h)],
         members=[
@@ -76,6 +86,7 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         "nodal_loads": {1: [fx, 0.0, 0.0]},
         "member_loads": {1: [w]},
         "reactions": {0: [rx, ry, mz], 2: [0.0, ry_roller, 0.0]},
+        "member_forces": {k: [float(v) for v in vals] for k, vals in sol.member_forces.items()},
         "eq": {"fx": sum_fx, "fy": sum_fy, "m": sum_m,
                "ok": bool(abs(sum_fx) < 1e-6 and abs(sum_fy) < 1e-6 and abs(sum_m) < 1e-6)},
     }
@@ -135,8 +146,8 @@ def main() -> int:
                     a_beam=float(values["-A_BEAM-"]), i_beam=float(values["-I_BEAM-"]),
                     w=float(values["-W-"]), fx=float(values["-FX-"]),
                 )
-            except ValueError:
-                sg.popup_error("Wrong inputs: enter numbers only.", title="Error")
+            except (TypeError, ValueError) as exc:
+                sg.popup_error(f"Invalid input: {exc}", title="Error")
                 continue
             window["-RESULTS-"].update(_fmt(results))
     window.close()
@@ -154,6 +165,7 @@ def _check() -> int:
     for name, want in checks.items():
         assert abs(r[name] - want) <= tol * max(1.0, abs(want)), f"{name}: {r[name]} != {want}"
     assert abs(r["sum_fx"]) < 1e-9 and abs(r["sum_fy"]) < 1e-9 and abs(r["sum_m"]) < 1e-6
+    assert set(r["member_forces"]) == {0, 1} and all(len(v) == 6 for v in r["member_forces"].values())
     print("gui self-check OK: solver matches demo workbook, equilibrium ~0")
     return 0
 

@@ -8,7 +8,8 @@ Serves one page (embedded HTML) with two tabs:
 
 Both render the same way: loading animation, deformed-shape figure (SVG,
 drawn animated, displacements magnified), reaction/member-force cards, and a
-global equilibrium cross-check. Uses only the Python standard library.
+global equilibrium cross-check. The web server itself uses only the Python
+standard library; the frame solver may have its own numerical dependencies.
 
 Run:  python3 gui/web_app.py        (opens http://127.0.0.1:8000)
 Self-check:  python3 gui/web_app.py --check   (headless, no browser)
@@ -29,7 +30,13 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gui.frame_gui import DEFAULTS, solve_lframe
+try:
+    from gui.frame_gui import DEFAULTS, solve_lframe
+except ModuleNotFoundError as exc:
+    # Also support running these two frontend files from the same directory.
+    if exc.name != "gui":
+        raise
+    from frame_gui import DEFAULTS, solve_lframe
 from solver import Frame, Member, NodalLoad, Node, Section, Support, UDL, solve
 
 #: Input keys in the same order/signature as solve_lframe.
@@ -53,41 +60,82 @@ def solve_model(model: dict) -> dict:
     "supports": {i: [ux,uy,rz]}, "nodal_loads": {i: [fx,fy,mz]},
     "member_loads": {i: [w...]}}  (units kN, m as in the solver).
     """
-    nodes = [Node(float(x), float(y)) for (x, y) in model["nodes"]]
-    if not nodes:
+    if not isinstance(model, dict):
+        raise ValueError("model must be a JSON object")
+
+    def finite(value, name):
+        try:
+            out = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a number") from exc
+        if not math.isfinite(out):
+            raise ValueError(f"{name} must be finite")
+        return out
+
+    raw_nodes = model.get("nodes")
+    if not isinstance(raw_nodes, list) or not raw_nodes:
         raise ValueError("model needs at least one node")
+    nodes = []
+    for ni, xy in enumerate(raw_nodes):
+        if not isinstance(xy, (list, tuple)) or len(xy) != 2:
+            raise ValueError(f"node {ni} must be [x, y]")
+        nodes.append(Node(finite(xy[0], f"node {ni} x"), finite(xy[1], f"node {ni} y")))
+
+    raw_members = model.get("members")
+    if not isinstance(raw_members, list) or not raw_members:
+        raise ValueError("model needs at least one member")
     members = []
-    for m in model["members"]:
+    for mi, m in enumerate(raw_members):
+        if not isinstance(m, dict):
+            raise ValueError(f"member {mi} must be an object")
         i, j = int(m["i"]), int(m["j"])
         if not (0 <= i < len(nodes) and 0 <= j < len(nodes) and i != j):
             raise ValueError(f"bad member indices {i}->{j} (have {len(nodes)} nodes)")
-        sec = Section(E=float(m["E"]), A=float(m["A"]), I=float(m["I"]))
-        if sec.E <= 0 or sec.A <= 0 or sec.I <= 0:
-            raise ValueError("member E, A, I must be positive")
-        members.append(Member(i, j, sec))
-    if not members:
-        raise ValueError("model needs at least one member")
+        if nodes[i].x == nodes[j].x and nodes[i].y == nodes[j].y:
+            raise ValueError(f"member {mi} has zero length")
+        e = finite(m["E"], f"member {mi} E")
+        a = finite(m["A"], f"member {mi} A")
+        inertia = finite(m["I"], f"member {mi} I")
+        if e <= 0 or a <= 0 or inertia <= 0:
+            raise ValueError(f"member {mi} E, A, I must be positive")
+        members.append(Member(i, j, Section(E=e, A=a, I=inertia)))
+
     supports = {}
     for k, v in model.get("supports", {}).items():
         idx = int(k)
         if not 0 <= idx < len(nodes):
             raise ValueError(f"support at unknown node {idx}")
-        dofs = [x if isinstance(x, bool) else bool(int(x)) for x in v][:3]
+        if not isinstance(v, (list, tuple)) or len(v) > 3:
+            raise ValueError(f"support at node {idx} must be [ux, uy, rz]")
+        try:
+            dofs = [x if isinstance(x, bool) else bool(int(x)) for x in v]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"support at node {idx} must contain booleans or 0/1") from exc
         while len(dofs) < 3:
             dofs.append(False)
         supports[idx] = Support(*dofs)
+    if not supports:
+        raise ValueError("model needs at least one support")
+
     nodal = {}
     for k, v in model.get("nodal_loads", {}).items():
         idx = int(k)
         if not 0 <= idx < len(nodes):
             raise ValueError(f"load at unknown node {idx}")
-        nodal[idx] = NodalLoad(*[float(f) for f in v])
+        if not isinstance(v, (list, tuple)) or len(v) > 3:
+            raise ValueError(f"load at node {idx} must be [fx, fy, mz]")
+        vals = [finite(f, f"load at node {idx}") for f in v]
+        vals.extend([0.0] * (3 - len(vals)))
+        nodal[idx] = NodalLoad(*vals)
+
     member_l = {}
     for k, v in model.get("member_loads", {}).items():
         idx = int(k)
         if not 0 <= idx < len(members):
             raise ValueError(f"UDL on unknown member {idx}")
-        member_l[idx] = [UDL(w=float(w)) for w in v]
+        if not isinstance(v, (list, tuple)):
+            raise ValueError(f"UDLs on member {idx} must be a list")
+        member_l[idx] = [UDL(w=finite(w, f"UDL on member {idx}")) for w in v]
 
     sol = solve(Frame(nodes, members, supports, nodal, member_l))
 
@@ -262,11 +310,19 @@ function drawPin(p, parent) {     // pin: triangle only
   const g = el("g", {"class":"fade"}, parent);
   el("path", {d:"M-12,0 L12,0 L0,9 Z", fill:"#fff", stroke:"#5b6b7a", "stroke-width":2, transform:`translate(${p.x},${p.y})`}, g);
 }
-function drawRoller(p, parent) {  // roller: triangle + wheel on ground line
+function drawRoller(p, parent) {  // vertical roller: restrains uy
   const g = el("g", {"class":"fade"}, parent);
-  el("line", {x1:p.x-22, y1:p.y+6, x2:p.x+22, y2:p.y+6, stroke:"#5b6b7a", "stroke-width":2}, g);
+  el("line", {x1:p.x-22, y1:p.y+18, x2:p.x+22, y2:p.y+18, stroke:"#5b6b7a", "stroke-width":2}, g);
   el("path", {d:"M-12,0 L12,0 L0,9 Z", fill:"#fff", stroke:"#5b6b7a", "stroke-width":2, transform:`translate(${p.x},${p.y})`}, g);
-  el("circle", {cx:p.x, cy:p.y+14, r:4, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+  el("circle", {cx:p.x-6, cy:p.y+13, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+  el("circle", {cx:p.x+6, cy:p.y+13, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+}
+
+function drawOtherSupport(p, dofs, parent) {
+  const g = el("g", {"class":"fade"}, parent);
+  el("rect", {x:p.x-7, y:p.y-7, width:14, height:14, rx:2, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+  const locked = ["ux","uy","rz"].filter((_, i) => dofs[i]).join(",");
+  label(p.x + 11, p.y + 4, locked || "free", g, null, "start");
 }
 function label(x, y, txt, parent, cls, anchor) {
   const t = el("text", {x, y, "font-size":12, fill:"#5b6b7a", "text-anchor": anchor || "start"}, parent);
@@ -289,7 +345,10 @@ function render(res) {
   // displacement magnification: biggest |ux|,|uy| maps to ~30% of the smaller span
   const dmax = Math.max(...nodes.map((n, i) => Math.max(Math.abs(u[3*i]), Math.abs(u[3*i+1]))), 1e-30);
   const mag = dmax > 1e-12 ? 0.3 * Math.min(xmax - xmin || 1, ymax - ymin || 1) / dmax : 0;
-  const D = nodes.map((n, i) => ({x: P[i].x + mag * u[3*i], y: P[i].y - mag * u[3*i+1]}));
+  const D = nodes.map((n, i) => ({
+    x: P[i].x + s * mag * u[3*i],
+    y: P[i].y - s * mag * u[3*i+1]
+  }));
 
   // members: soft base, dashed centerline, animated deformed
   const members = res.members;
@@ -302,8 +361,9 @@ function render(res) {
   for (const k in res.supports) {
     const [ux, uy, rz] = res.supports[k];
     if (ux && uy && rz) drawFixed(P[+k], fig);
-    else if (uy) drawRoller(P[+k], fig);
-    else drawPin(P[+k], fig);
+    else if (ux && uy && !rz) drawPin(P[+k], fig);
+    else if (!ux && uy && !rz) drawRoller(P[+k], fig);
+    else drawOtherSupport(P[+k], [ux, uy, rz], fig);
   }
 
   // member UDLs: arrows along the local -y side (positive w = downward)
@@ -369,7 +429,7 @@ function render(res) {
     const [rx, ry, mz] = res.reactions[k];
     cards.push([`Rx @ node ${k}`, fmt(rx) + " kN"], [`Ry @ node ${k}`, fmt(ry) + " kN"], [`Mz @ node ${k}`, fmt(mz) + " kN*m"]);
   }
-  for (const k in res.member_forces) {
+  for (const k in (res.member_forces || {})) {
     const f = res.member_forces[k];
     cards.push([`Mbr ${k}: axial`, fmt(f[0]) + " kN"], [`Mbr ${k}: shear`, fmt(f[1]) + " kN"],
       [`Mbr ${k}: M i-end`, fmt(f[2]) + " kN*m"], [`Mbr ${k}: M j-end`, fmt(f[5]) + " kN*m"]);
@@ -388,7 +448,7 @@ function render(res) {
   eq.textContent = (ok ? "OK - " : "NOT BALANCED - ") +
     `equilibrium: sum Fx = ${res.eq.fx.toExponential(2)}, sum Fy = ${res.eq.fy.toExponential(2)}, sum M = ${res.eq.m.toExponential(2)}`;
   document.getElementById("cap").textContent =
-    `Blue = deformed shape, ${mag > 0 ? "displacements magnified x" + Math.round(1/mag) : "no visible displacement"}. ` +
+    `Blue = deformed shape, ${mag > 0 ? "deformation scale x" + fmt(mag) : "no visible displacement"}. ` +
     `White dots = nodes (indices shown), triangles = supports, arrows = loads/reactions.`;
 }
 
@@ -450,8 +510,10 @@ document.getElementById("solve").addEventListener("click", solve);
 document.getElementById("solve-json").addEventListener("click", solve);
 document.getElementById("reset").addEventListener("click", () => {
   for (const [k] of FIELDS) document.getElementById("in-" + k).value = DEFAULTS[k];
+  document.getElementById("err").textContent = "";
 });
 buildForm();
+document.getElementById("model").value = JSON.stringify(DEMO_MODEL, null, 2);
 </script>
 </body>
 </html>
@@ -534,6 +596,7 @@ def _check():
     assert abs(res["mz"] - 110.2941900998947) < 1e-6, "mz mismatch"
     assert res["eq"]["ok"] and abs(res["eq"]["m"]) < 1e-6, "demo not balanced"
     assert len(res["u"]) == 9 and len(res["nodes"]) == 3
+    assert set(res["member_forces"]) == {"0", "1"}
 
     # custom-model endpoint: same frame expressed as JSON
     custom = {
@@ -556,8 +619,11 @@ def _check():
     assert b'id="tab-json"' in urllib.request.urlopen(base + "/").read()
 
     # validation: missing key, bad span, bad member -> 400
-    for bad in (dict(DEFAULTS, l=-6.0),
-                {"model": {"nodes": [[0, 0]], "members": [{"i": 0, "j": 5, "E": 1, "A": 1, "I": 1}]}}):
+    for bad in (
+        dict(DEFAULTS, l=-6.0),
+        {"model": {"nodes": [[0, 0]], "members": [{"i": 0, "j": 5, "E": 1, "A": 1, "I": 1}], "supports": {0: [1, 1, 1]}}},
+        {"model": {"nodes": [[0, 0], [0, 0]], "members": [{"i": 0, "j": 1, "E": 1, "A": 1, "I": 1}], "supports": {0: [1, 1, 1]}}},
+    ):
         try:
             post(bad)
             raise AssertionError("bad input must 400")
@@ -565,6 +631,7 @@ def _check():
             assert exc.code == 400
 
     server.shutdown()
+    server.server_close()
     print("web server self-check OK")
 
 
