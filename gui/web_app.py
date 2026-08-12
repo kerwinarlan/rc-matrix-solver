@@ -280,7 +280,9 @@ const DEMO_MODEL = {nodes:[[0,0],[0,5],[6,5]], members:[
   nodal_loads:{1:[30,0,0]}, member_loads:{1:[20]}};
 const NS = "http://www.w3.org/2000/svg";
 const fig = document.getElementById("fig");
-const W = 640, H = 420, PAD = 46;
+const W = 640, H = 420;
+// Asymmetric padding: extra room on top (UDL label) and left (reaction labels).
+const PADL = 90, PADR = 46, PADT = 100, PADB = 46;
 
 function el(name, attrs, parent) {
   const n = document.createElementNS(NS, name);
@@ -290,7 +292,7 @@ function el(name, attrs, parent) {
 }
 function arrowHead(parent) {
   const defs = el("defs", {}, parent);
-  el("marker", {id:"ah", viewBox:"0 0 10 10", refX:"8", refY:"5", markerWidth:"7", markerHeight:"7", orient:"auto-start-reverse"},
+  el("marker", {id:"ah", viewBox:"0 0 10 10", refX:"8", refY:"5", markerWidth:"10", markerHeight:"10", orient:"auto-start-reverse"},
     defs);
   el("path", {d:"M0,0 L10,5 L0,10 z", fill:"#1c2733"}, defs);
 }
@@ -334,6 +336,16 @@ function drawOtherSupport(p, dofs, parent) {
   label(p.x + 11, p.y + 4, locked || "free", g, null, "start");
 }
 function label(x, y, txt, parent, cls, anchor) {
+  // approximate text width (7px per char) to keep labels inside the canvas
+  const w = txt.length * 7;
+  if (anchor === "middle") {
+    const lo = 50 + w/2, hi = W - 50 - w/2;
+    if (lo < hi) x = Math.max(lo, Math.min(x, hi));
+  } else if (anchor === "end") {
+    if (8 + w < W - 8) x = Math.max(8 + w, x);
+  } else {
+    if (8 + w < W - 8) x = Math.min(x, W - 8 - w);
+  }
   const t = el("text", {x, y, "font-size":12, fill:"#5b6b7a", "text-anchor": anchor || "start"}, parent);
   if (cls) t.setAttribute("class", cls);
   t.textContent = txt;
@@ -347,8 +359,8 @@ function render(res) {
   const nodes = res.nodes, u = res.u;
   const xs = nodes.map(n => n[0]), ys = nodes.map(n => n[1]);
   const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
-  const s = Math.min((W - 2*PAD) / Math.max(xmax - xmin, 1e-9), (H - 2*PAD) / Math.max(ymax - ymin, 1e-9));
-  const X = (x, y) => PAD + (x - xmin) * s, Y = (x, y) => H - PAD - (y - ymin) * s;
+  const s = Math.min((W - PADL - PADR) / Math.max(xmax - xmin, 1e-9), (H - PADT - PADB) / Math.max(ymax - ymin, 1e-9));
+  const X = (x, y) => PADL + (x - xmin) * s, Y = (x, y) => H - PADB - (y - ymin) * s;
   const P = nodes.map(n => ({x: X(n[0], n[1]), y: Y(n[0], n[1])}));
 
   // displacement magnification: biggest |ux|,|uy| maps to ~30% of the smaller span
@@ -375,6 +387,18 @@ function render(res) {
     const c2 = {x: D[j].x - k3*tj.x, y: D[j].y - k3*tj.y};
     el("path", {d:`M${D[i].x},${D[i].y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${D[j].x},${D[j].y}`,
       fill:"none", stroke:"#2563eb", "stroke-width":4, class:"deformed"}, fig);
+  }
+
+  // displaced nodes + joint rotation theta (from the solver rz)
+  for (let i = 0; i < nodes.length; i++) {
+    const rz = u[3*i+2] || 0;
+    const p = D[i];
+    el("circle", {cx:p.x, cy:p.y, r:3.5, fill:"#2563eb", stroke:"#fff", "stroke-width":1}, fig);
+    if (Math.abs(rz) < 1e-9) continue;
+    const r0 = 10, sw = rz > 0 ? 1 : 0;
+    el("path", {d:`M${p.x+r0},${p.y} A${r0},${r0} 0 0 ${sw} ${p.x},${p.y + (sw ? r0 : -r0)}`,
+      fill:"none", stroke:"#dc2626", "stroke-width":2, markerEnd:"url(#ah)"}, fig);
+    label(p.x + 8, p.y + 18, `θ=${(rz*180/Math.PI).toFixed(2)}°`, fig, "fade", "start");
   }
   for (const p of P) el("circle", {cx:p.x, cy:p.y, r:5, fill:"#fff", stroke:"#1c2733", "stroke-width":2}, fig);
 
@@ -433,23 +457,23 @@ function render(res) {
     }
   }
 
-  // reactions at supported nodes
+  // reactions at supported nodes (labels placed inside the canvas)
   for (const k in res.reactions) {
     const [rx, ry, mz] = res.reactions[k];
     const p = P[+k];
     if (rx) {
       const d = rx > 0 ? 1 : -1;
-      arrow(p.x + d*24, p.y - 46, p.x + d*44, p.y - 46, fig, "fade");
-      label(p.x + d*50, p.y - 42, `Rx=${fmt(rx)}`, fig, "fade", d > 0 ? "start" : "end");
+      arrow(p.x + d*22, p.y - 52, p.x + d*42, p.y - 52, fig, "fade");
+      label(p.x + d*32, p.y - 64, `Rx=${fmt(rx)}`, fig, "fade", "middle");
     }
     if (ry) {
       const d = ry > 0 ? 1 : -1;
-      arrow(p.x + 46, p.y - d*24, p.x + 46, p.y - d*44, fig, "fade");
-      label(p.x + 52, p.y - d*50, `Ry=${fmt(ry)}`, fig, "fade");
+      arrow(p.x + 52, p.y - d*28, p.x + 52, p.y - d*48, fig, "fade");
+      label(p.x + 58, p.y - d*52, `Ry=${fmt(ry)}`, fig, "fade");
     }
     if (mz) {
-      momentArrow(p.x - 26, p.y - 4, mz, fig, "fade");
-      label(p.x - 60, p.y + 4, `Mz=${fmt(mz)} kN*m`, fig, "fade", "end");
+      momentArrow(p.x - 22, p.y - 14, mz, fig, "fade");
+      label(p.x + 10, p.y - 14, `Mz=${fmt(mz)} kN*m`, fig, "fade", "start");
     }
   }
 
@@ -485,7 +509,8 @@ function render(res) {
     `equilibrium: sum Fx = ${res.eq.fx.toExponential(2)}, sum Fy = ${res.eq.fy.toExponential(2)}, sum M = ${res.eq.m.toExponential(2)}`;
   document.getElementById("cap").textContent =
     `Blue = deformed shape, ${mag > 0 ? "deformation scale x" + fmt(mag) : "no visible displacement"}. ` +
-    `White dots = nodes (indices shown), triangles = supports, straight arrows = forces, curly arrows = moments.`;
+    `White dots = original nodes, blue dots = displaced, triangles = supports, ` +
+    `straight arrows = forces, curly arrows = moments, red arcs = joint rotation θ.`;
 }
 
 function buildForm() {
