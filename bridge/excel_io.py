@@ -150,7 +150,11 @@ def build_template(path: Union[str, Path]) -> Path:
 
 
 def _read_table_rows(ws, table: Table) -> List[List[InputValue]]:
-    """Read data rows until the first fully blank row in the table band."""
+    """Read data rows until the first fully blank row in the table band.
+
+    Rows with a blank id cell are skipped (they cannot be joined to anything);
+    blank number cells read as 0.0 (off restraint, zero load).
+    """
     rows: List[List[InputValue]] = []
     band = ws.iter_rows(
         min_row=table.data_row,
@@ -162,13 +166,19 @@ def _read_table_rows(ws, table: Table) -> List[List[InputValue]]:
         values = [cell.value for cell in row]
         if all(value is None for value in values):
             break
-        rows.append(values)
+        if any(value is None for column, value in zip(table.columns, values)
+               if column.dtype == "id"):
+            continue
+        rows.append([_coerce(value, column.dtype)
+                     for column, value in zip(table.columns, values)])
     return rows
 
 
 def _coerce(value: InputValue, dtype: str) -> InputValue:
-    """id -> int, number -> float. None never reaches here (blank rows stop the scan)."""
-    return int(value) if dtype == "id" else float(value)
+    """id -> int, number -> float; blank number cells read as 0.0."""
+    if dtype == "id":
+        return int(value)
+    return 0.0 if value is None else float(value)
 
 
 def _write_count(ws, table: Table) -> None:
@@ -238,6 +248,15 @@ if __name__ == "__main__":  # self-check: one runnable round-trip
         }
         io.write_outputs(outputs)
         wb = openpyxl.load_workbook(path)
+        # Partial input rows: blank number cells read as 0.0, blank-id rows skipped.
+        ws = wb["Inputs-Loads"]
+        ws["A2"], ws["B2"], ws["C2"], ws["D2"] = 1, 5.0, None, None
+        ws["A3"], ws["B3"] = None, 9.0  # no id -> row skipped
+        wb.save(path)
+        inputs = OpenpyxlWorkbookIO(path).read_inputs()
+        assert inputs["LOAD_NODE"] == [1]
+        assert inputs["LOAD_N_FX"] == [5.0] and inputs["LOAD_N_FY"] == [0.0]
+        assert inputs["LOAD_N_MZ"] == [0.0]
         assert wb["Outputs-Displacements"]["B2"].value == 0.001, "ux not written"
         assert wb["Outputs-Displacements"]["C3"].value == 0.0005, "uy row 2 not written"
         assert wb["Outputs-MemberForces"]["A2"].value == 1, "member id not written"

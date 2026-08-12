@@ -30,6 +30,9 @@ def vc_detailed(concrete: Material, bw: float, d: float, rho_w: float, vu_n: flo
     omitted (beams with no axial load).
     Units: vu_n in N, mu_nmm in N*mm.
     """
+    if mu_nmm <= 0.0:
+        # Mu -> 0 makes the Vu*d/Mu term unbounded, so the 0.29*sqrt(fc') cap governs.
+        return 0.29 * sqrt(concrete.fc) * bw * d
     vc = (0.16 * sqrt(concrete.fc) + 17.0 * rho_w * vu_n * d / mu_nmm) * bw * d
     return min(vc, 0.29 * sqrt(concrete.fc) * bw * d)
 
