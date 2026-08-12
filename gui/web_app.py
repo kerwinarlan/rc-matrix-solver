@@ -299,6 +299,15 @@ function arrow(x1,y1,x2,y2,parent,cls) {
   if (cls) a.setAttribute("class", cls);
   return a;
 }
+function momentArrow(px, py, val, parent, cls) {
+  // Curly arrow for a moment about z: 270-degree arc. Positive Mz (model
+  // CCW) appears clockwise on screen because the y axis is flipped.
+  const r = 15, sw = val >= 0 ? 1 : 0, ey = py + (sw ? -r : r);
+  const a = el("path", {d:`M${px+r},${py} A${r},${r} 0 1 ${sw} ${px},${ey}`,
+    fill:"none", stroke:"#1c2733", "stroke-width":2.5, markerEnd:"url(#ah)"}, parent);
+  if (cls) a.setAttribute("class", cls);
+  return a;
+}
 function drawFixed(p, parent) {   // fixed base: hatch + triangle
   const g = el("g", {"class":"fade"}, parent);
   el("line", {x1:p.x-14, y1:p.y, x2:p.x-14, y2:p.y-16, stroke:"#5b6b7a", "stroke-width":2}, g);
@@ -354,7 +363,19 @@ function render(res) {
   const members = res.members;
   for (const [i,j] of members) el("line", {x1:P[i].x,y1:P[i].y,x2:P[j].x,y2:P[j].y,stroke:"#c3ccd5","stroke-width":6}, fig);
   for (const [i,j] of members) el("line", {x1:P[i].x,y1:P[i].y,x2:P[j].x,y2:P[j].y,stroke:"#94a3b8","stroke-width":1.5,"stroke-dasharray":"6 4"}, fig);
-  for (const [i,j] of members) el("line", {x1:D[i].x,y1:D[i].y,x2:D[j].x,y2:D[j].y,stroke:"#2563eb","stroke-width":4,"class":"deformed"}, fig);
+  // deformed shape: cubic Bezier per member, end tangents rotated by rz
+  for (const [i,j] of members) {
+    const l = Math.hypot(P[j].x - P[i].x, P[j].y - P[i].y) || 1;
+    const dx = (P[j].x - P[i].x) / l, dy = (P[j].y - P[i].y) / l;
+    const rot = (c, r) => ({x: c.x*Math.cos(r) - c.y*Math.sin(r), y: c.x*Math.sin(r) + c.y*Math.cos(r)});
+    const ri = -(u[3*i+2] || 0), rj = -(u[3*j+2] || 0);  // screen y flip
+    const ti = rot({x: dx, y: dy}, ri), tj = rot({x: dx, y: dy}, rj);
+    const k3 = l / 3;
+    const c1 = {x: D[i].x + k3*ti.x, y: D[i].y + k3*ti.y};
+    const c2 = {x: D[j].x - k3*tj.x, y: D[j].y - k3*tj.y};
+    el("path", {d:`M${D[i].x},${D[i].y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${D[j].x},${D[j].y}`,
+      fill:"none", stroke:"#2563eb", "stroke-width":4, class:"deformed"}, fig);
+  }
   for (const p of P) el("circle", {cx:p.x, cy:p.y, r:5, fill:"#fff", stroke:"#1c2733", "stroke-width":2}, fig);
 
   // supports
@@ -372,13 +393,19 @@ function render(res) {
     const wsum = res.member_loads[mi].reduce((a,b) => a + b, 0);
     const dx = nodes[j][0] - nodes[i][0], dy = nodes[j][1] - nodes[i][1], L = Math.hypot(dx, dy) || 1;
     const vx = -dy/L, vy = dx/L;             // model-space local -y
+    // rays plus a line joining their tails (standard distributed-load diagram)
+    const tails = [];
     for (let k = 1; k <= 5; k++) {
       const t = k/6, mx = nodes[i][0] + t*dx, my = nodes[i][1] + t*dy;
       const bx = X(mx, my), by = Y(mx, my);
       const ax = X(mx + vx, my + vy) - bx, ay = Y(mx + vx, my + vy) - by;
       const al = Math.hypot(ax, ay) || 1;
-      arrow(bx + ax/al*30, by + ay/al*30, bx + ax/al*12, by + ay/al*12, fig);
+      const tail = {x: bx + ax/al*34, y: by + ay/al*34};
+      tails.push(tail);
+      arrow(tail.x, tail.y, bx + ax/al*14, by + ay/al*14, fig, "fade");
     }
+    el("polyline", {points: tails.map(t => `${t.x},${t.y}`).join(" "),
+      fill:"none", stroke:"#1c2733", "stroke-width":1.5, class:"fade"}, fig);
     const mx = nodes[i][0] + dx/2, my = nodes[i][1] + dy/2;
     const bx = X(mx, my), by = Y(mx, my);
     const ax = X(mx + vx, my + vy) - bx, ay = Y(mx + vx, my + vy) - by;
@@ -400,7 +427,10 @@ function render(res) {
       arrow(p.x + 20, p.y - d*18, p.x + 20, p.y - d*44, fig, "fade");
       label(p.x + 26, p.y - d*50, `Fy=${fmt(fy)}`, fig, "fade");
     }
-    if (mz) label(p.x + 6, p.y - 30, `Mz=${fmt(mz)}`, fig, "fade");
+    if (mz) {
+      momentArrow(p.x - 30, p.y - 28, mz, fig, "fade");
+      label(p.x - 30, p.y - 50, `Mz=${fmt(mz)}`, fig, "fade", "middle");
+    }
   }
 
   // reactions at supported nodes
@@ -417,7 +447,10 @@ function render(res) {
       arrow(p.x + 46, p.y - d*24, p.x + 46, p.y - d*44, fig, "fade");
       label(p.x + 52, p.y - d*50, `Ry=${fmt(ry)}`, fig, "fade");
     }
-    if (mz) label(p.x - 90, p.y - 6, `Mz=${fmt(mz)} kN*m`, fig, "fade");
+    if (mz) {
+      momentArrow(p.x - 26, p.y - 4, mz, fig, "fade");
+      label(p.x - 60, p.y + 4, `Mz=${fmt(mz)} kN*m`, fig, "fade", "end");
+    }
   }
 
   // node indices
@@ -437,9 +470,12 @@ function render(res) {
   const out = document.getElementById("results");
   out.innerHTML = "";
   for (const [k, v] of cards) {
-    const d = el("div", {"class":"res fade"}, out);
-    el("div", {"class":"k"}, d).textContent = k;
-    el("div", {"class":"v"}, d).textContent = v;
+    const d = document.createElement("div");
+    d.className = "res fade";
+    const kd = document.createElement("div"); kd.className = "k"; kd.textContent = k;
+    const vd = document.createElement("div"); vd.className = "v"; vd.textContent = v;
+    d.appendChild(kd); d.appendChild(vd);
+    out.appendChild(d);
   }
   const ok = res.eq.ok;
   const eq = document.getElementById("eq");
@@ -449,14 +485,20 @@ function render(res) {
     `equilibrium: sum Fx = ${res.eq.fx.toExponential(2)}, sum Fy = ${res.eq.fy.toExponential(2)}, sum M = ${res.eq.m.toExponential(2)}`;
   document.getElementById("cap").textContent =
     `Blue = deformed shape, ${mag > 0 ? "deformation scale x" + fmt(mag) : "no visible displacement"}. ` +
-    `White dots = nodes (indices shown), triangles = supports, arrows = loads/reactions.`;
+    `White dots = nodes (indices shown), triangles = supports, straight arrows = forces, curly arrows = moments.`;
 }
 
 function buildForm() {
   const box = document.getElementById("inputs");
   for (const [k, labelTxt] of FIELDS) {
-    const lab = el("label", {}, box); lab.textContent = labelTxt;
-    el("input", {type:"number", step:"any", value:String(DEFAULTS[k]), id:"in-" + k}, box);
+    // HTML elements need createElement, not the SVG-namespace el() helper.
+    const lab = document.createElement("label");
+    lab.textContent = labelTxt;
+    box.appendChild(lab);
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.step = "any";
+    inp.value = String(DEFAULTS[k]); inp.id = "in-" + k;
+    box.appendChild(inp);
   }
 }
 function collect() {
