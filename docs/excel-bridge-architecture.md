@@ -170,9 +170,21 @@ intensity column; extend the layout here if axial/partial loads are added.
 | Col | Header | Named range | Kind |
 |---|---|---|---|
 | A | Member ID | OUT_DES_MEMBER_ID | id |
-| B | As required (mm^2) | OUT_DES_AS_REQ | number |
-| C | As provided (mm^2) | OUT_DES_AS_PROV | number |
-| D | Stirrup spacing (mm) | OUT_DES_STIRRUP | number |
+| B | Design type (BEAM/COLUMN) | OUT_DES_TYPE | text |
+| C | As required (mm^2) | OUT_DES_AS_REQ | number |
+| D | As provided (mm^2) | OUT_DES_AS_PROV | number |
+| E | Stirrup/tie spacing (mm) | OUT_DES_STIRRUP | number |
+| F | Axial Pu (kN) | OUT_DES_AXIAL_KN | number |
+| G | Capacity phi*Pn (kN) | OUT_DES_PHI_PN_KN | number |
+| H | Capacity phi*Mn (kN*m) | OUT_DES_PHI_MN_KNM | number |
+| I | Utilization | OUT_DES_UTIL | number |
+
+For a beam, As required/provided are the flexure steel, the spacing is the
+stirrup spacing, phi*Pn is 0, and phi*Mn is the flexural capacity. For a
+column (near-vertical member), As is the longitudinal steel, the spacing is
+the tie spacing, phi*Pn is the capped axial capacity (0.80 phi Po, tied),
+phi*Mn is the moment capacity at Pu from the P-M interaction curve, and the
+utilization is the larger of Pu/phi*Pn and Mu/phi*Mn.
 
 Row ordering rule: output row i always corresponds to input row i of the same
 group (nodes in input order, members in input order). The id columns are there
@@ -305,12 +317,23 @@ def design_members(materials: dict, members: list[dict],
 
 - `materials`: `{"fc": float, "fy": float, "es": float}` (kN/m^2).
 - `members`: `[{"id": int, "i_node": int, "j_node": int,
-  "E": float, "A": float, "I": float}, ...]` (user ids).
+  "E": float, "A": float, "I": float, "i_x": float, "i_y": float,
+  "j_x": float, "j_y": float}, ...]` (user ids; the coordinate keys are
+  added by `_inputs_to_models` in `run.py` and are optional).
 - `member_forces`: per member, input order, `(axial, shear, m_i, m_j)` sliced
-  from the solver's 6-vector by `_design_forces` in `run.py`.
-- Returns one dict per member, input order:
+  from the solver's 6-vector by `_design_forces` in `run.py`. Axial is
+  compression positive (solver local axes), which is the Pu sign
+  `design.column` expects.
+- Member classification: near-vertical members (|dy| >= |dx| from the
+  coordinate keys) are designed as columns (`design.column`), everything
+  else as beams. Without coordinates every member is a beam (backward
+  compatible). Exact member-type selection from the model is future work.
+- Returns one dict per member, input order. The pinned keys stay:
   `{"as_req": float, "as_prov": float, "stirrup_spacing": float}`
-  (mm^2, mm^2, mm).
+  (mm^2, mm^2, mm); extended with `{"type": "BEAM"|"COLUMN",
+  "pu_kn": float, "phi_pn_kn": float, "phi_mn_knm": float,
+  "util": float, "ok": bool}`. For a column, as_req/as_prov are the
+  longitudinal steel and stirrup_spacing the tie spacing.
 
 ## 9. Open items and reconciliation notes
 

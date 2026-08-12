@@ -21,8 +21,9 @@ concrete beam design to NSCP 2015 / ACI 318.
 │  solver/ ──────────►  design/               │
 │  2D frame DSM          ACI 318 / NSCP 2015  │
 │  displacements         beam flexure + shear │
-│  reactions             required rebar,      │
-│  member forces         stirrups             │
+│  reactions             column P-M interact. │
+│  member forces         required rebar,      │
+│                        stirrups, ties       │
 └──────────────────────┬──────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────┐
@@ -50,7 +51,9 @@ analysis-and-design loop from one Excel file.
   stiffness and transformation matrices, global stiffness assembly, boundary
   condition application, solve, and member end forces. Units are kN and m.
 - **Python backend, RC design** (`design/`). Beam flexure design for singly
-  and doubly reinforced sections, shear design with stirrups, and the ACI 318
+  and doubly reinforced sections, shear design with stirrups, column design
+  for axial load + uniaxial moment (P-M strain-compatibility interaction
+  with the tension/compression-controlled phi transition), and the ACI 318
   strength-reduction framework, aligned with NSCP 2015 (an SI code family
   where section numbers differ; equivalences are noted in the source). Units
   are mm, MPa, kN.
@@ -64,7 +67,7 @@ analysis-and-design loop from one Excel file.
 ```
 rc-matrix-solver/
 ├── solver/          2D frame Direct Stiffness Method core
-├── design/          RC beam design per ACI 318 / NSCP 2015
+├── design/          RC member design (beam + column) per ACI 318 / NSCP 2015
 ├── bridge/          Excel read/write layer, layout, end-to-end runner
 ├── docs/            excel-bridge-architecture.md (design contract)
 ├── examples/        demo workbook + build script + walkthrough
@@ -131,7 +134,7 @@ writes the outputs - the full loop in one command.
 
 ```bash
 python3 solver/example.py          # 3 hand-solvable frame cases
-python3 -m design.sanity_check     # ACI/NSCP worked-example beam
+python3 -m design.sanity_check     # ACI/NSCP worked-example beam and column
 ```
 
 ---
@@ -141,8 +144,9 @@ python3 -m design.sanity_check     # ACI/NSCP worked-example beam
 - Structural analysis: kN, m, kN/m^2 for E, kN/m for UDL, kN*m for moments.
 - RC design: mm, MPa, kN; SI rebar diameters (10-36 mm).
 - Design provisions follow ACI 318 with NSCP 2015 equivalences documented in
-  `design/` docstrings: tension-controlled strain limit, rho_min/rho_max,
-  phi = 0.9 flexure / 0.75 shear, stirrup spacing limits.
+  `design/` docstrings: tension/compression-controlled strain limits,
+  rho_min/rho_max, phi = 0.9 flexure / 0.75 shear / 0.65 compression
+  (columns), stirrup and tie spacing limits.
 
 ---
 
@@ -220,6 +224,7 @@ functional repository whose history records the whole agentic process.
 ## Status
 
 Local repository, complete analysis-and-design scaffold with a proven
-end-to-end run. Natural next steps: column design (axial-load interaction),
-member end releases, T-beam geometry, and a live xlwings workbook with Excel
-formulas.
+end-to-end run covering beam flexure, beam shear, and column axial-load
+interaction. Natural next steps: member end releases, T-beam geometry,
+biaxial column bending, slenderness/P-delta amplification, spiral columns,
+and a live xlwings workbook with Excel formulas.

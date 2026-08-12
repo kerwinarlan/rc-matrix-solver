@@ -12,6 +12,7 @@ from dataclasses import dataclass
 # (NSCP 2015 Sec 409.3.2 uses the same values).
 PHI_FLEXURE: float = 0.90  # tension-controlled flexure
 PHI_SHEAR: float = 0.75    # shear
+PHI_COMPRESSION: float = 0.65  # compression-controlled, tied columns
 
 
 @dataclass(frozen=True)

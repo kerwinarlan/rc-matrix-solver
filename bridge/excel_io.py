@@ -20,7 +20,7 @@ try:
 except ImportError:  # pragma: no cover - only reachable without openpyxl installed
     openpyxl = None  # type: ignore[assignment]
 
-InputValue = Union[int, float]
+InputValue = Union[int, float, str]
 InputData = Dict[str, List[InputValue]]
 OutputData = Dict[str, List[InputValue]]
 
@@ -230,14 +230,19 @@ if __name__ == "__main__":  # self-check: one runnable round-trip
             "OUT_REAC_FY": [50.0, -50.0], "OUT_REAC_MZ": [0.0, 0.0],
             "OUT_MF_MEMBER_ID": [1], "OUT_MF_AXIAL": [-25000.0], "OUT_MF_SHEAR": [3000.0],
             "OUT_MF_M_I": [0.0], "OUT_MF_M_J": [-4500.0],
-            "OUT_DES_MEMBER_ID": [1], "OUT_DES_AS_REQ": [420.0], "OUT_DES_AS_PROV": [452.0],
-            "OUT_DES_STIRRUP": [200.0],
+            "OUT_DES_MEMBER_ID": [1], "OUT_DES_TYPE": ["COLUMN"],
+            "OUT_DES_AS_REQ": [420.0], "OUT_DES_AS_PROV": [452.0],
+            "OUT_DES_STIRRUP": [200.0], "OUT_DES_AXIAL_KN": [2500.0],
+            "OUT_DES_PHI_PN_KN": [2789.0], "OUT_DES_PHI_MN_KNM": [312.0],
+            "OUT_DES_UTIL": [0.95],
         }
         io.write_outputs(outputs)
         wb = openpyxl.load_workbook(path)
         assert wb["Outputs-Displacements"]["B2"].value == 0.001, "ux not written"
         assert wb["Outputs-Displacements"]["C3"].value == 0.0005, "uy row 2 not written"
         assert wb["Outputs-MemberForces"]["A2"].value == 1, "member id not written"
+        assert wb["Outputs-Design"]["B2"].value == "COLUMN", "design type not written"
+        assert wb["Outputs-Design"]["F2"].value == 2500.0, "axial Pu not written"
         for name in ("NODE_X", "MEMBER_I", "OUT_DISP_UX", "NODE_COUNT", "LOAD_U_COUNT"):
             assert name in wb.defined_names, f"missing named range {name}"
 

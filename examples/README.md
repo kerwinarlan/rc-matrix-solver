@@ -1,7 +1,8 @@
 # Demo workbook: rc_matrix_solver_demo.xlsx
 
 A committed, pre-filled workbook for the end-to-end pipeline: read inputs ->
-solve (2D frame DSM) -> design (ACI 318 / NSCP 2015 beam) -> write outputs.
+solve (2D frame DSM) -> design (ACI 318 / NSCP 2015 beam + column) -> write
+outputs.
 
 ## Quickstart
 
@@ -40,7 +41,8 @@ Sanity targets after a run:
 - Reaction sum = applied loads: Fy total 120 kN, Fx total 30 kN.
 - Moment balance about node 1: 510 kN*m.
 - Beam 2 is governed by rho_min: as_req = 440 mm^2 (300x500, d = 440).
-- Column 1: as_req ~ 912 mm^2, stirrups from shear.
+- Column 1 (near-vertical) is designed per P-M interaction: 4-25 mm bars
+  (Ast = 1963 mm^2), 10 mm ties at 390 mm; utilization ~0.85.
 
 ## Sheet mapping
 
@@ -52,7 +54,7 @@ source of truth, and `docs/excel-bridge-architecture.md`.
 
 Outputs sheets (rewritten on every run): Outputs-Displacements (ux, uy, rz
 per node), Outputs-Reactions, Outputs-MemberForces (local end forces: axial,
-shear, i-end/j-end moment), Outputs-Design (as_req, as_prov, stirrup
-spacing).
+shear, i-end/j-end moment), Outputs-Design (design type, as_req, as_prov,
+stirrup/tie spacing, Pu, phi*Pn, phi*Mn, utilization).
 
 Units: forces kN, lengths m, E kN/m^2, moments kN*m - the solver contract.

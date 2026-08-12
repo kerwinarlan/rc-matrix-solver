@@ -32,9 +32,18 @@ def _import_or_none(name: str) -> Optional[Any]:
 def _inputs_to_models(inputs: InputData) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]],
                                                   Dict[str, Any]]:
     """Plain-data models for design, plus materials. Design contract shapes:
-    member dicts are {"id", "i_node", "j_node", "E", "A", "I"} with user ids."""
+    member dicts are {"id", "i_node", "j_node", "E", "A", "I"} with user ids,
+    plus node coordinates i_x/i_y/j_x/j_y so design_members can tell columns
+    (near-vertical members) from beams."""
+    node_xy = {
+        nid: (x, y) for nid, x, y in zip(inputs["NODE_ID"], inputs["NODE_X"], inputs["NODE_Y"])
+    }
     members = [
-        {"id": mid, "i_node": i_node, "j_node": j_node, "E": e, "A": a, "I": i_inertia}
+        {
+            "id": mid, "i_node": i_node, "j_node": j_node, "E": e, "A": a, "I": i_inertia,
+            "i_x": node_xy[i_node][0], "i_y": node_xy[i_node][1],
+            "j_x": node_xy[j_node][0], "j_y": node_xy[j_node][1],
+        }
         for mid, i_node, j_node, e, a, i_inertia in zip(
             inputs["MEMBER_ID"], inputs["MEMBER_I_NODE"], inputs["MEMBER_J_NODE"],
             inputs["MEMBER_E"], inputs["MEMBER_A"], inputs["MEMBER_I"],
@@ -124,9 +133,14 @@ def _assemble_outputs(node_ids: List[int], member_ids: List[int], solution: Any,
     if design_out is not None:
         outputs.update({
             "OUT_DES_MEMBER_ID": member_ids,
+            "OUT_DES_TYPE": [d.get("type", "BEAM") for d in design_out],
             "OUT_DES_AS_REQ": [d["as_req"] for d in design_out],
             "OUT_DES_AS_PROV": [d["as_prov"] for d in design_out],
             "OUT_DES_STIRRUP": [d["stirrup_spacing"] for d in design_out],
+            "OUT_DES_AXIAL_KN": [d.get("pu_kn", 0.0) for d in design_out],
+            "OUT_DES_PHI_PN_KN": [d.get("phi_pn_kn", 0.0) for d in design_out],
+            "OUT_DES_PHI_MN_KNM": [d.get("phi_mn_knm", 0.0) for d in design_out],
+            "OUT_DES_UTIL": [d.get("util", 0.0) for d in design_out],
         })
     return outputs
 
@@ -189,7 +203,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def _design_forces(solution: Any, member_ids: List[int]) -> List[Tuple[float, float, float, float]]:
-    """Slice solver 6-vectors [N,V,M_i,N,V,M_j] to the design contract (axial, shear, M_i, M_j)."""
+    """Slice solver 6-vectors [N,V,M_i,N,V,M_j] to the design contract
+    (axial, shear, M_i, M_j). Axial is compression positive in the solver's
+    local axes, which is the Pu sign design.column expects."""
     return [
         (float(solution.member_forces[i][0]), float(solution.member_forces[i][1]),
          float(solution.member_forces[i][2]), float(solution.member_forces[i][5]))

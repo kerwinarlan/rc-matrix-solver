@@ -146,9 +146,14 @@ TABLES: Tuple[Table, ...] = (
         direction="out",
         columns=(
             Column("Member ID", "OUT_DES_MEMBER_ID", "id"),
+            Column("Design type", "OUT_DES_TYPE"),
             Column("As required (mm^2)", "OUT_DES_AS_REQ"),
             Column("As provided (mm^2)", "OUT_DES_AS_PROV"),
-            Column("Stirrup spacing (mm)", "OUT_DES_STIRRUP"),
+            Column("Stirrup/tie spacing (mm)", "OUT_DES_STIRRUP"),
+            Column("Axial Pu (kN)", "OUT_DES_AXIAL_KN"),
+            Column("Capacity phi*Pn (kN)", "OUT_DES_PHI_PN_KN"),
+            Column("Capacity phi*Mn (kN*m)", "OUT_DES_PHI_MN_KNM"),
+            Column("Utilization", "OUT_DES_UTIL"),
         ),
     ),
 )
