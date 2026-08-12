@@ -37,3 +37,7 @@ Keep this file for knowledge useful to almost every future agent session in this
 Do not repeat what the codebase already shows; point to the authoritative file or command instead.
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
+
+## Third-party submodules (third_party/)
+
+- `third_party/` holds git submodules forked from Engr. Jaydee Lucero's talk repos (PythonAsia 2026): `truss_analyzer` (2D truss FEM, numpy/matplotlib, no license stated) and `midasgennx_2d_truss_example` (MIDAS Gen NX 2026 API, MIT). Provenance and license notes: `third_party/README.md`. Neither is imported by solver/design/bridge; fetch with `git submodule update --init`.

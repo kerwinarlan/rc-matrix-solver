@@ -114,6 +114,7 @@ rc-matrix-solver/
 ├── bridge/          Excel read/write layer, layout, end-to-end runner
 ├── docs/            excel-bridge-architecture.md (design contract)
 ├── examples/        demo workbook + build script + walkthrough
+├── third_party/     forks of reference repos (git submodules)
 ├── requirements.txt runtime dependencies
 └── AGENTS.md        project memory for agentic development
 ```
