@@ -66,6 +66,18 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         "n_col": n_col, "v_col": v_col, "m_col_i": m_col_i,
         "m_beam_i": m_beam_i, "m_beam_j": m_beam_j,
         "sum_fx": sum_fx, "sum_fy": sum_fy, "sum_m": sum_m,
+        # For the web figure: original node coords + raw global displacements.
+        "nodes": [(0.0, 0.0), (0.0, h), (l, h)],
+        "u": [float(v) for v in sol.u],  # [ux1, uy1, rz1, ux2, uy2, rz2, ux3, uy3, rz3]
+        "w": w, "fx": fx,
+        # Generic-frame shape so the web figure renders both demo and custom models.
+        "members": [[0, 1], [1, 2]],
+        "supports": {0: [True, True, True], 2: [False, True, False]},
+        "nodal_loads": {1: [fx, 0.0, 0.0]},
+        "member_loads": {1: [w]},
+        "reactions": {0: [rx, ry, mz], 2: [0.0, ry_roller, 0.0]},
+        "eq": {"fx": sum_fx, "fy": sum_fy, "m": sum_m,
+               "ok": bool(abs(sum_fx) < 1e-6 and abs(sum_fy) < 1e-6 and abs(sum_m) < 1e-6)},
     }
 
 

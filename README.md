@@ -179,6 +179,29 @@ writes the outputs - the full loop in one command.
 ```bash
 python3 solver/example.py          # 3 hand-solvable frame cases
 python3 -m design.sanity_check     # ACI/NSCP worked-example beam and column
+python3 gui/frame_gui.py --check   # GUI + web solve_lframe matches the demo
+python3 gui/web_app.py --check     # browser UI through the real HTTP handler
+```
+
+### 6. Run the browser UI
+
+A no-dependency web frontend (stdlib `http.server`, embedded HTML/SVG) with two tabs:
+tweak the demo L-frame, or paste any custom 2D frame as JSON (nodes, members,
+supports, loads). Press Solve, watch the loading animation, and inspect the
+deformed-shape figure, reactions, member forces, and a global equilibrium check.
+
+```bash
+python3 gui/web_app.py            # opens http://127.0.0.1:8000
+```
+
+Custom model spec: `{"nodes": [[x,y],...], "members": [{"i","j","E","A","I"}...],
+"supports": {i: [ux,uy,rz]}, "nodal_loads": {i: [fx,fy,mz]}, "member_loads": {i: [w,...]}}`,
+units kN and m as in the solver core.
+
+Or the desktop variant (needs `pip install freesimplegui`):
+
+```bash
+python3 gui/frame_gui.py
 ```
 
 ---
