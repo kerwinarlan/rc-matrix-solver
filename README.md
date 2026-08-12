@@ -21,6 +21,7 @@ concrete member design (beams and columns) to NSCP 2015 / ACI 318.
 ## Table of Contents
 
 - [Why it exists: engineers live in Excel](#why-it-exists-engineers-live-in-excel)
+- [How It Works](#how-it-works)
 - [Project Overview](#project-overview)
 - [Repository layout](#repository-layout)
 - [Setup & Usage](#setup--usage)
@@ -45,7 +46,9 @@ closes that gap: the workbook is the interface, Python is the engine, and one
 
 ---
 
-## Project Overview
+## How It Works
+
+```
 ┌─────────────────────────────────────────────┐
 │  Excel workbook (.xlsx)                     │
 │  Inputs sheets: nodes, members, loads,      │
