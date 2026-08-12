@@ -201,6 +201,8 @@ PAGE = """<!doctype html>
   .panel input { width:100%; padding:7px 9px; font-size:14px; border:1px solid var(--line); border-radius:6px; font-variant-numeric: tabular-nums; }
   .panel input:focus, .panel textarea:focus { outline:2px solid var(--acc); border-color:transparent; }
   .panel textarea { width:100%; height:280px; font-family:ui-monospace, Menlo, monospace; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:8px; resize:vertical; }
+  .presets label { display:block; font-size:12px; color:var(--mut); margin:8px 0 2px; }
+  .presets select { width:100%; padding:7px 9px; font-size:13px; border:1px solid var(--line); border-radius:6px; background:#fff; }
   .row { display:flex; gap:8px; margin-top:14px; }
   button { flex:1; padding:9px; font-size:14px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   button#solve { background:var(--acc); color:#fff; border-color:var(--acc); font-weight:600; }
@@ -235,6 +237,17 @@ PAGE = """<!doctype html>
 </header>
 <main>
   <div class="card side">
+    <div class="presets">
+      <label for="struct-type">Structure type</label>
+      <select id="struct-type">
+        <option>Propped L-frame</option>
+        <option>Column (fixed base, free top)</option>
+        <option>Simply supported beam</option>
+        <option>Cantilever beam</option>
+      </select>
+      <label for="material">Material</label>
+      <select id="material"></select>
+    </div>
     <div class="tabs">
       <button id="tab-demo" class="tab active">Demo L-frame</button>
       <button id="tab-json" class="tab">Custom model (JSON)</button>
@@ -310,12 +323,13 @@ function momentArrow(px, py, val, parent, cls) {
   if (cls) a.setAttribute("class", cls);
   return a;
 }
-function drawFixed(p, parent) {   // fixed base: hatch + triangle
+function drawFixed(p, parent) {   // fixed base: downward triangle + hatched block
   const g = el("g", {"class":"fade"}, parent);
-  el("line", {x1:p.x-14, y1:p.y, x2:p.x-14, y2:p.y-16, stroke:"#5b6b7a", "stroke-width":2}, g);
-  el("line", {x1:p.x,   y1:p.y, x2:p.x,   y2:p.y-16, stroke:"#5b6b7a", "stroke-width":2}, g);
-  el("line", {x1:p.x-14,y1:p.y-8, x2:p.x, y2:p.y-8, stroke:"#5b6b7a", "stroke-width":2}, g);
-  el("path", {d:"M-16,0 L16,0 L0,10 Z", fill:"#fff", stroke:"#5b6b7a", "stroke-width":2, transform:`translate(${p.x},${p.y})`}, g);
+  el("path", {d:"M-15,0 L15,0 L0,10 Z", fill:"#fff", stroke:"#5b6b7a", "stroke-width":2, transform:`translate(${p.x},${p.y})`}, g);
+  for (let i = 0; i < 4; i++) {  // hatch marks below the triangle
+    const w = 13 - i * 3, y = p.y + 14 + i * 4;
+    el("line", {x1:p.x - w, y1:y, x2:p.x + w, y2:y, stroke:"#5b6b7a", "stroke-width":2}, g);
+  }
 }
 function drawPin(p, parent) {     // pin: triangle only
   const g = el("g", {"class":"fade"}, parent);
@@ -325,8 +339,8 @@ function drawRoller(p, parent) {  // vertical roller: restrains uy
   const g = el("g", {"class":"fade"}, parent);
   el("line", {x1:p.x-22, y1:p.y+18, x2:p.x+22, y2:p.y+18, stroke:"#5b6b7a", "stroke-width":2}, g);
   el("path", {d:"M-12,0 L12,0 L0,9 Z", fill:"#fff", stroke:"#5b6b7a", "stroke-width":2, transform:`translate(${p.x},${p.y})`}, g);
-  el("circle", {cx:p.x-6, cy:p.y+13, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
-  el("circle", {cx:p.x+6, cy:p.y+13, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+  el("circle", {cx:p.x-6, cy:p.y+14.5, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
+  el("circle", {cx:p.x+6, cy:p.y+14.5, r:3.5, fill:"#fff", stroke:"#5b6b7a", "stroke-width":2}, g);
 }
 
 function drawOtherSupport(p, dofs, parent) {
@@ -437,43 +451,43 @@ function render(res) {
     label(bx + ax/al*46, by + ay/al*46, `w = ${fmt(wsum)} kN/m`, fig, "fade", "middle");
   }
 
-  // nodal loads: arrows in the sign direction
+  // nodal loads: arrows with the head at the node, pointing in the load direction
   for (const k in res.nodal_loads) {
     const [fx, fy, mz] = res.nodal_loads[k];
     const p = P[+k];
     if (fx) {
       const d = fx > 0 ? 1 : -1;
-      arrow(p.x + d*18, p.y - 20, p.x + d*44, p.y - 20, fig, "fade");
-      label(p.x + d*50, p.y - 16, `Fx=${fmt(fx)}`, fig, "fade", d > 0 ? "start" : "end");
+      arrow(p.x - d*34, p.y, p.x - d*6, p.y, fig, "fade");
+      label(p.x - d*40, p.y - 8, `Fx=${fmt(fx)}`, fig, "fade", d > 0 ? "end" : "start");
     }
     if (fy) {
       const d = fy > 0 ? 1 : -1;
-      arrow(p.x + 20, p.y - d*18, p.x + 20, p.y - d*44, fig, "fade");
-      label(p.x + 26, p.y - d*50, `Fy=${fmt(fy)}`, fig, "fade");
+      arrow(p.x, p.y - d*34, p.x, p.y - d*6, fig, "fade");
+      label(p.x + 6, p.y - d*40, `Fy=${fmt(fy)}`, fig, "fade");
     }
     if (mz) {
-      momentArrow(p.x - 30, p.y - 28, mz, fig, "fade");
-      label(p.x - 30, p.y - 50, `Mz=${fmt(mz)}`, fig, "fade", "middle");
+      momentArrow(p.x, p.y, mz, fig, "fade");
+      label(p.x + 8, p.y - 26, `Mz=${fmt(mz)}`, fig, "fade");
     }
   }
 
-  // reactions at supported nodes (labels placed inside the canvas)
+  // reactions: arrows anchored at the support node, pointing in the reaction direction
   for (const k in res.reactions) {
     const [rx, ry, mz] = res.reactions[k];
     const p = P[+k];
     if (rx) {
       const d = rx > 0 ? 1 : -1;
-      arrow(p.x + d*22, p.y - 52, p.x + d*42, p.y - 52, fig, "fade");
-      label(p.x + d*32, p.y - 64, `Rx=${fmt(rx)}`, fig, "fade", "middle");
+      arrow(p.x, p.y - 12, p.x + d*30, p.y - 12, fig, "fade");
+      label(p.x + d*15, p.y - 28, `Rx=${fmt(rx)}`, fig, "fade", "middle");
     }
     if (ry) {
       const d = ry > 0 ? 1 : -1;
-      arrow(p.x + 52, p.y - d*28, p.x + 52, p.y - d*48, fig, "fade");
-      label(p.x + 58, p.y - d*52, `Ry=${fmt(ry)}`, fig, "fade");
+      arrow(p.x - 18, p.y, p.x - 18, p.y - d*30, fig, "fade");
+      label(p.x - 24, p.y - d*36, `Ry=${fmt(ry)}`, fig, "fade", "end");
     }
     if (mz) {
-      momentArrow(p.x - 22, p.y - 14, mz, fig, "fade");
-      label(p.x + 10, p.y - 14, `Mz=${fmt(mz)} kN*m`, fig, "fade", "start");
+      momentArrow(p.x, p.y - 16, mz, fig, "fade");
+      label(p.x + 8, p.y - 22, `Mz=${fmt(mz)} kN*m`, fig, "fade", "start");
     }
   }
 
@@ -543,7 +557,63 @@ function setTab(name) {
 document.getElementById("tab-demo").addEventListener("click", () => setTab("demo"));
 document.getElementById("tab-json").addEventListener("click", () => setTab("json"));
 document.getElementById("load-demo").addEventListener("click", () => {
-  document.getElementById("model").value = JSON.stringify(DEMO_MODEL, null, 2);
+  const model = JSON.parse(JSON.stringify(DEMO_MODEL));
+  if (model.members) for (const m of model.members) m.E = parseFloat(matSel.value);
+  document.getElementById("model").value = JSON.stringify(model, null, 2);
+});
+
+// structure presets + material selector (E in kN/m^2)
+const MATERIALS = [
+  {name:"Concrete fc'=21 MPa (Ec 21.5 GPa)", E:21.5e6},
+  {name:"Concrete fc'=28 MPa (Ec 25 GPa)", E:25e6},
+  {name:"Concrete fc'=35 MPa (Ec 28 GPa)", E:28e6},
+  {name:"Steel (E 200 GPa)", E:200e6},
+];
+const STRUCTURES = {
+  "Propped L-frame": {demo:{h:5,l:6,e:25e6,a_col:0.16,i_col:0.002133,a_beam:0.15,i_beam:0.003125,w:20,fx:30}},
+  "Column (fixed base, free top)": {model:{nodes:[[0,0],[0,5]],
+    members:[{i:0,j:1,E:25e6,A:0.16,I:0.002133}],
+    supports:{0:[true,true,true]}, nodal_loads:{1:[30,0,0]}}},
+  "Simply supported beam": {model:{nodes:[[0,0],[6,0]],
+    members:[{i:0,j:1,E:25e6,A:0.15,I:0.003125}],
+    supports:{0:[true,true,false],1:[false,true,false]}, member_loads:{0:[20]}}},
+  "Cantilever beam": {model:{nodes:[[0,0],[6,0]],
+    members:[{i:0,j:1,E:25e6,A:0.15,I:0.003125}],
+    supports:{0:[true,true,true]}, member_loads:{0:[20]}}},
+};
+const matSel = document.getElementById("material");
+for (const m of MATERIALS) {
+  const o = document.createElement("option");
+  o.value = m.E; o.textContent = m.name;
+  matSel.appendChild(o);
+}
+matSel.value = String(25e6);   // default fc'=28
+function applyMaterialToModel(model) {
+  for (const m of model.members) m.E = parseFloat(matSel.value);
+}
+function loadStructure(name) {
+  const s = STRUCTURES[name];
+  if (s.demo) {
+    for (const k in s.demo) document.getElementById("in-" + k).value = s.demo[k];
+    document.getElementById("in-e").value = matSel.value;
+    setTab("demo");
+  } else {
+    const model = JSON.parse(JSON.stringify(s.model));
+    applyMaterialToModel(model);
+    document.getElementById("model").value = JSON.stringify(model, null, 2);
+    setTab("json");
+  }
+}
+document.getElementById("struct-type").addEventListener("change", e => loadStructure(e.target.value));
+matSel.addEventListener("change", () => {
+  document.getElementById("in-e").value = matSel.value;
+  try {
+    const model = JSON.parse(document.getElementById("model").value);
+    if (model && model.members) {
+      applyMaterialToModel(model);
+      document.getElementById("model").value = JSON.stringify(model, null, 2);
+    }
+  } catch (e) { /* textarea empty or invalid JSON: leave as-is */ }
 });
 
 async function solve() {
@@ -576,7 +646,7 @@ async function solve() {
 document.getElementById("solve").addEventListener("click", solve);
 document.getElementById("solve-json").addEventListener("click", solve);
 document.getElementById("reset").addEventListener("click", () => {
-  for (const [k] of FIELDS) document.getElementById("in-" + k).value = DEFAULTS[k];
+  loadStructure(document.getElementById("struct-type").value);
   document.getElementById("err").textContent = "";
 });
 buildForm();
