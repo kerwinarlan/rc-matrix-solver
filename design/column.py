@@ -7,7 +7,9 @@ differ the equivalence is stated in a comment, never silently substituted.
 
 Scope: tied rectangular columns under axial compression + uniaxial moment.
 Explicitly out of scope (documented, not implemented): biaxial bending,
-slenderness / P-delta amplification, spiral reinforcement, tension members.
+slenderness / P-delta amplification, spiral reinforcement, tension members,
+column shear design (ties are sized for confinement only; phi*Vc is not
+checked).
 
 Units: Pu in kN, Mu in kN*m, dimensions in mm, stresses in MPa; forces come
 out in N, moments in N*mm.
@@ -236,6 +238,9 @@ def design_column(
         raise ValueError(f"invalid column section {b} x {h}")
     if h <= 2.0 * d_prime or b <= 2.0 * d_prime:
         raise ValueError("d' is too large for the column section")
+    if fy <= 0.0 or fy >= es * EPS_CU:
+        raise ValueError(
+            f"invalid fy {fy} MPa (0 < fy < es*EPS_CU = {es * EPS_CU:.0f} MPa)")
     concrete = Material(fc=fc, fy=fy, es=es)
     ag = b * h
     configs = _bar_configs(RHO_MIN_COLUMN * ag, RHO_MAX_COLUMN * ag)
