@@ -4,3 +4,6 @@
 [submodule "third_party/midasgennx_2d_truss_example"]
 	path = third_party/midasgennx_2d_truss_example
 	url = https://github.com/kerwinarlan/midasgennx_2d_truss_example.git
+[submodule "third_party/simple-beam-calculator"]
+	path = third_party/simple-beam-calculator
+	url = https://github.com/kerwinarlan/simple-beam-calculator.git
