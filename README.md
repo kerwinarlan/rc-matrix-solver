@@ -14,7 +14,11 @@
 An Excel-driven Reinforced Concrete Matrix Solver and Design tool. Excel is the
 frontend for inputs and outputs. Python is the calculation engine: a 2D frame
 Direct Stiffness Method (DSM) structural analysis, followed by reinforced
-concrete member design (beams and columns) to NSCP 2015 / ACI 318.
+concrete member design (beams and columns) to NSCP 2015 / ACI 318 - and now a
+seismic loads module (NSCP 2015 equivalent lateral force) plus a step-by-step
+reviewer in the browser that walks every calculation in LaTeX. CE 152
+(structural theory) course materials are verified against the solver as part of
+the self-checks.
 
 ---
 
@@ -74,6 +78,13 @@ closes that gap: the workbook is the interface, Python is the engine, and one
 │  Outputs sheets: displacements, reactions,  │
 │  member forces, design                      │
 └─────────────────────────────────────────────┘
+
+Sister tools alongside the bridge:
+
+│  seismic/   NSCP 2015 Sec. 208.5 equivalent lateral force: base shear,
+│             story forces, load combos, design spectrum (CE 152 M1).
+│  web UI     browser reviewer - solve a frame or a seismic model and step
+│             through every number in LaTeX (CE 152 M1/M2).
 ```
 
 ---
@@ -100,6 +111,15 @@ analysis-and-design loop from one Excel file.
   strength-reduction framework, aligned with NSCP 2015 (an SI code family
   where section numbers differ; equivalences are noted in the source). Units
   are mm, MPa, kN.
+- **Seismic loads** (`seismic/`). NSCP 2015 Sec. 208.5 equivalent lateral
+  force procedure: zone/soil/occupancy/system tables, near-source factors,
+  base shear with both design-spectrum branches, vertical force
+  distribution, and load combinations (Ev, U1, U2). Self-check reproduces
+  the CE 152 Module 1 worked example (V = 2407 kN).
+- **Step-by-step reviewer.** `solver/steps.py` runs the real solver and emits
+  the full DSM walk-through (element matrices, assembly, reduced system,
+  displacements, reactions) as LaTeX with a plain-text fallback. The browser
+  UI renders it with KaTeX - the repo doubles as a reviewer for the course.
 - **Excel bridge** (`bridge/`). A swappable read/write layer. openpyxl is the
   primary engine for headless batch runs. xlwings is the optional interactive
   engine for live Excel sessions. The workbook layout and named-range scheme
@@ -109,9 +129,11 @@ analysis-and-design loop from one Excel file.
 
 ```
 rc-matrix-solver/
-├── solver/          2D frame Direct Stiffness Method core
+├── solver/          2D frame Direct Stiffness Method core + step reviewer
 ├── design/          RC member design (beam + column) per ACI 318 / NSCP 2015
+├── seismic/         NSCP 2015 equivalent lateral force (Sec. 208.5)
 ├── bridge/          Excel read/write layer, layout, end-to-end runner
+├── gui/             browser UI (stdlib only) + FreeSimpleGUI desktop variant
 ├── docs/            excel-bridge-architecture.md (design contract)
 ├── examples/        demo workbook + build script + walkthrough
 ├── third_party/     forks of reference repos (git submodules)
@@ -179,16 +201,24 @@ writes the outputs - the full loop in one command.
 ```bash
 python3 solver/example.py          # 3 hand-solvable frame cases
 python3 -m design.sanity_check     # ACI/NSCP worked-example beam and column
+python3 -m solver.modal            # lumped-mass mode shapes vs closed form
+python3 -m solver.steps            # DSM step reviewer vs solve()
+python3 -m seismic.nscp2015        # ELF worked example (V = 2407 kN)
 python3 gui/frame_gui.py --check   # GUI + web solve_lframe matches the demo
 python3 gui/web_app.py --check     # browser UI through the real HTTP handler
 ```
 
 ### 6. Run the browser UI
 
-A no-dependency web frontend (stdlib `http.server`, embedded HTML/SVG) with two tabs:
-tweak the demo L-frame, or paste any custom 2D frame as JSON (nodes, members,
-supports, loads). Press Solve, watch the loading animation, and inspect the
+A no-dependency web frontend (stdlib `http.server`, embedded HTML/SVG) with three
+tabs: tweak the demo L-frame, paste any custom 2D frame as JSON (nodes, members,
+supports, loads), or run the seismic loads workflow (zone, soil, occupancy,
+system, story weights). Press Solve, watch the loading animation, and inspect the
 deformed-shape figure, reactions, member forces, and a global equilibrium check.
+The seismic tab draws the design spectrum and the story-force table. On any tab,
+the Steps button walks the full calculation through LaTeX (KaTeX from a CDN,
+plain-text fallback offline) - element matrices, assembly, reduced system,
+displacements, reactions; or every ELF parameter for the seismic tab.
 
 ```bash
 python3 gui/web_app.py            # opens http://127.0.0.1:8000
@@ -209,6 +239,8 @@ python3 gui/frame_gui.py
 ## Units and code provisions
 
 - Structural analysis: kN, m, kN/m^2 for E, kN/m for UDL, kN*m for moments.
+- Seismic loads: kN and m; density t/m^3 (concrete 2.4, steel 7.85) feeds the
+  lumped-mass modal analysis used for mode shapes and the natural period.
 - RC design: mm, MPa, kN; SI rebar diameters (10-36 mm).
 - Design provisions follow ACI 318 with NSCP 2015 equivalences documented in
   `design/` docstrings: tension/compression-controlled strain limits,

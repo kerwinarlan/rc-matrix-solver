@@ -1,22 +1,28 @@
 """Browser frontend for the rc-matrix-solver frame engine.
 
-Serves one page (embedded HTML) with two tabs:
+Serves one page (embedded HTML) with three tabs:
 
 - Demo L-frame: the familiar quick inputs (reuses gui/frame_gui.solve_lframe).
 - Custom model (JSON): any 2D frame - nodes, members (E/A/I), supports,
   nodal loads, member UDLs - solved by the Direct Stiffness Method.
+- Seismic loads: NSCP 2015 Sec. 208.5 equivalent lateral force procedure
+  (seismic/nscp2015.py) - the CE 152 Module 1 workflow, step by step.
 
-Both render the same way: loading animation, deformed-shape figure (SVG,
-animated, displacements magnified), reaction/member-force cards, and a
+Both frame tabs render the same way: loading animation, deformed-shape figure
+(SVG, animated, displacements magnified), reaction/member-force cards, and a
 global equilibrium cross-check. On top of that:
 
 - Deformation slider + play button sweep the deflection from 0 to full.
 - Load arrows are draggable (live re-solve while you pull).
 - Mode buttons animate the lumped-mass mode shapes (solver/modal.py),
   labeled with their natural frequency in Hz; material density feeds them.
+- The Steps button posts the current frame to /steps and shows the full
+  Direct Stiffness Method walk-through (solver/steps.py, CE 152 Module 2):
+  element stiffness matrices, assembly, reduced system, solution.
 
-The web server itself uses only the Python standard library; the frame
-solver may have its own numerical dependencies.
+Every step renders as LaTeX via KaTeX (CDN) with a plain-text fallback so
+the app also works offline. The web server itself uses only the Python
+standard library; the frame solver may have its own numerical dependencies.
 
 Run:  python3 gui/web_app.py        (opens http://127.0.0.1:8000)
 Self-check:  python3 gui/web_app.py --check   (headless, no browser)
@@ -38,14 +44,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 try:
-    from gui.frame_gui import DEFAULTS, solve_lframe
+    from gui.frame_gui import DEFAULTS, build_lframe, solve_lframe
 except ModuleNotFoundError as exc:
     # Also support running these two frontend files from the same directory.
     if exc.name != "gui":
         raise
-    from frame_gui import DEFAULTS, solve_lframe
+    from frame_gui import DEFAULTS, build_lframe, solve_lframe
+from seismic.nscp2015 import SeismicInputs, elf
 from solver import Frame, Member, NodalLoad, Node, Section, Support, UDL, solve
 from solver.modal import mode_shapes
+from solver.steps import solve_steps
 
 #: Input keys in the same order/signature as solve_lframe.
 FIELDS = [
@@ -61,13 +69,12 @@ FIELDS = [
 ]
 
 
-def solve_model(model: dict, density: float = 2.4) -> dict:
-    """Solve an arbitrary 2D frame from the JSON model spec; JSON-safe result.
+def _parse_model(model: dict):
+    """Validate the JSON model spec; return (frame, nodes, members, supports, nodal, member_l).
 
     Spec: {"nodes": [[x,y]...], "members": [{"i","j","E","A","I"}...],
     "supports": {i: [ux,uy,rz]}, "nodal_loads": {i: [fx,fy,mz]},
     "member_loads": {i: [w...]}}  (units kN, m as in the solver).
-    density (t/m^3) feeds the lumped-mass modal analysis returned as "modes".
     """
     if not isinstance(model, dict):
         raise ValueError("model must be a JSON object")
@@ -146,7 +153,15 @@ def solve_model(model: dict, density: float = 2.4) -> dict:
             raise ValueError(f"UDLs on member {idx} must be a list")
         member_l[idx] = [UDL(w=finite(w, f"UDL on member {idx}")) for w in v]
 
-    frame = Frame(nodes, members, supports, nodal, member_l)
+    return Frame(nodes, members, supports, nodal, member_l), nodes, members, supports, nodal, member_l
+
+
+def solve_model(model: dict, density: float = 2.4) -> dict:
+    """Solve an arbitrary 2D frame from the JSON model spec; JSON-safe result.
+
+    density (t/m^3) feeds the lumped-mass modal analysis returned as "modes".
+    """
+    frame, nodes, members, supports, nodal, member_l = _parse_model(model)
     sol = solve(frame)
 
     try:
@@ -255,7 +270,20 @@ PAGE = """<!doctype html>
   .mini.active { background:var(--acc); color:#fff; border-color:var(--acc); }
   .noanim .deformed { stroke-dashoffset:0; }
   .noanim .deformed, .noanim .fade { animation:none !important; }
+  .steps { margin-top:16px; }
+  .steps h3 { margin:0 0 8px; font-size:15px; }
+  .step { background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-bottom:10px; }
+  .step h4 { margin:0 0 6px; font-size:13px; color:var(--mut); font-weight:600; }
+  .step .math { font-size:14px; overflow-x:auto; }
+  .step .math .katex-display { margin:0.4em 0; }
+  .step .plain { font-size:13px; white-space:pre-wrap; font-family:ui-monospace, Menlo, monospace; }
+  table.ltab { border-collapse:collapse; font-size:13px; margin-top:12px; width:100%; }
+  table.ltab th, table.ltab td { border:1px solid var(--line); padding:4px 10px; text-align:right; }
+  table.ltab th { background:var(--bg); color:var(--mut); font-size:12px; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
 <header>
@@ -278,6 +306,7 @@ PAGE = """<!doctype html>
     <div class="tabs">
       <button id="tab-demo" class="tab active">Demo L-frame</button>
       <button id="tab-json" class="tab">Custom model (JSON)</button>
+      <button id="tab-seis" class="tab">Seismic loads</button>
     </div>
     <div class="panel active" id="panel-demo">
       <div id="inputs"></div>
@@ -296,9 +325,19 @@ PAGE = """<!doctype html>
         supports/loads: {node: [ux,uy,rz]} / {node: [fx,fy,mz]} -
         member UDLs: {member: [w, ...]}, w positive downward.</div>
     </div>
+    <div class="panel" id="panel-seis">
+      <div id="se-inputs"></div>
+      <div class="row">
+        <button id="solve-seis">Compute</button>
+        <button id="reset-seis">Reset</button>
+      </div>
+      <div class="cap">Levels: one "hx wx" pair per line, bottom to top
+        (hx = height above the base, m). Seismic loads per NSCP 2015 Sec. 208.</div>
+    </div>
     <div class="err" id="err"></div>
   </div>
   <div class="stage">
+    <div id="frame-stage">
     <div class="card figwrap">
       <div class="spinner" id="spin"><div class="ring"></div><div>Solving frame...</div></div>
       <svg id="fig" viewBox="0 0 640 420" role="img" aria-label="frame figure"></svg>
@@ -311,10 +350,15 @@ PAGE = """<!doctype html>
       <button id="mode-1" class="mini" disabled>M1</button>
       <button id="mode-2" class="mini" disabled>M2</button>
       <button id="mode-3" class="mini" disabled>M3</button>
+      <span class="clabel">Review</span>
+      <button id="btn-steps" class="mini" title="Step-by-step Direct Stiffness Method solution">Steps</button>
     </div>
     <div class="cap" id="cap"></div>
     <div class="results" id="results"></div>
     <div class="eq" id="eq" hidden></div>
+    </div>
+    <div id="seis-out" hidden></div>
+    <div class="steps" id="steps-panel" hidden></div>
   </div>
 </main>
 <script>
@@ -601,11 +645,22 @@ function setTab(name) {
   activeTab = name;
   document.getElementById("tab-demo").classList.toggle("active", name === "demo");
   document.getElementById("tab-json").classList.toggle("active", name === "json");
+  document.getElementById("tab-seis").classList.toggle("active", name === "seis");
   document.getElementById("panel-demo").classList.toggle("active", name === "demo");
   document.getElementById("panel-json").classList.toggle("active", name === "json");
+  document.getElementById("panel-seis").classList.toggle("active", name === "seis");
+  const frameStage = document.getElementById("frame-stage");
+  const seisOut = document.getElementById("seis-out");
+  frameStage.style.display = name === "seis" ? "none" : "";
+  seisOut.style.display = name === "seis" ? "" : "none";
+  if (name === "seis" && !seisOut.dataset.loaded) {
+    seisOut.dataset.loaded = "1";
+    solveSeismic();
+  }
 }
 document.getElementById("tab-demo").addEventListener("click", () => setTab("demo"));
 document.getElementById("tab-json").addEventListener("click", () => setTab("json"));
+document.getElementById("tab-seis").addEventListener("click", () => setTab("seis"));
 document.getElementById("load-demo").addEventListener("click", () => {
   const model = JSON.parse(JSON.stringify(DEMO_MODEL));
   if (model.members) for (const m of model.members) m.E = parseFloat(matSel.value);
@@ -844,6 +899,250 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 buildForm();
 document.getElementById("model").value = JSON.stringify(DEMO_MODEL, null, 2);
+
+// ---------- step-by-step reviewer (LaTeX via KaTeX, plain fallback) ----------
+function renderSteps(data, container) {
+  container.hidden = false;
+  const existing = container.querySelector("h3");
+  if (!existing) {
+    const h = document.createElement("h3");
+    h.textContent = data.title;
+    container.appendChild(h);
+  }
+  container.querySelectorAll(".step").forEach(n => n.remove());
+  const katexOk = typeof window.renderMathInElement === "function";
+  for (const s of data.steps) {
+    const box = document.createElement("div");
+    box.className = "step";
+    const t = document.createElement("h4");
+    t.textContent = s.title;
+    box.appendChild(t);
+    if (katexOk) {
+      const m = document.createElement("div");
+      m.className = "math";
+      m.textContent = "$$" + s.latex + "$$";
+      box.appendChild(m);
+    } else {
+      const p = document.createElement("div");
+      p.className = "plain";
+      p.textContent = s.plain;
+      box.appendChild(p);
+    }
+    container.appendChild(box);
+  }
+  if (katexOk) {
+    try {
+      renderMathInElement(container, {delimiters: [{left: "$$", right: "$$", display: true}], throwOnError: false});
+    } catch (e) { /* keep the plain fallback visible */ }
+  }
+}
+
+// frame steps: post the current frame (demo fields or custom model) to /steps
+async function showSteps() {
+  const err = document.getElementById("err"); err.textContent = "";
+  let body;
+  if (activeTab === "demo") {
+    const v = collect();
+    for (const [k] of FIELDS) if (!isFinite(v[k])) { err.textContent = "Enter numbers only."; return; }
+    body = JSON.stringify(v);
+  } else {
+    const m = getJsonModel();
+    if (!m) { err.textContent = "Invalid JSON in the model box."; return; }
+    body = JSON.stringify({model: m});
+  }
+  try {
+    const r = await fetch("/steps", {method: "POST", headers: {"Content-Type": "application/json"}, body});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "steps failed");
+    const panel = document.getElementById("steps-panel");
+    renderSteps(data, panel);
+    panel.scrollIntoView({behavior: "smooth", block: "nearest"});
+  } catch (e) {
+    err.textContent = "Error: " + e.message;
+  }
+}
+document.getElementById("btn-steps").addEventListener("click", showSteps);
+
+// ---------- seismic loads tab (NSCP 2015 Sec. 208, CE 152 Module 1) ----------
+const SE_SOILS = ["SA", "SB", "SC", "SD", "SE"];
+const SE_SYSTEMS = [
+  ["RC special moment-resisting frame", "8.5", "0.0731"],
+  ["RC intermediate moment-resisting frame", "5.5", "0.0731"],
+  ["Steel special moment-resisting frame", "8.5", "0.0853"],
+  ["Steel moment frame (lecture example)", "3.5", "0.0853"],
+  ["RC shear wall", "5.5", "0.0488"],
+  ["Other (enter R, Ct)", "", ""],
+];
+const SE_DEFAULTS = {
+  occ: "1.0", soil: "SD", zone: "4", source: "A", dist: "2",
+  r: "8.5", ct: "0.0731", hn: "9.3", t: "",
+  levels: "3.2 4400\\n6.3 5000\\n9.3 3000",
+};
+let se = {};
+function seAdd(labelTxt, buildInput) {
+  const box = document.getElementById("se-inputs");
+  const lab = document.createElement("label");
+  lab.textContent = labelTxt;
+  box.appendChild(lab);
+  const inp = buildInput();
+  box.appendChild(inp);
+  return inp;
+}
+function buildSeismicForm() {
+  const box = document.getElementById("se-inputs");
+  box.innerHTML = "";
+  se.occ = seAdd("Occupancy (I, Table 208-1)", () => {
+    const s = document.createElement("select"); s.id = "se-occ";
+    for (const [txt, v] of [["Standard", "1.0"], ["Essential", "1.25"], ["Hazardous", "1.5"]])
+      s.add(new Option(txt, v));
+    s.value = SE_DEFAULTS.occ; return s;
+  });
+  se.soil = seAdd("Soil profile type (Table 208-2)", () => {
+    const s = document.createElement("select"); s.id = "se-soil";
+    for (const v of SE_SOILS) s.add(new Option(v, v));
+    s.value = SE_DEFAULTS.soil; return s;
+  });
+  se.zone = seAdd("Seismic zone (Table 208-3)", () => {
+    const s = document.createElement("select"); s.id = "se-zone";
+    s.innerHTML = '<option value="4">Zone 4 (Z = 0.40)</option><option value="2">Zone 2 (Z = 0.20)</option>';
+    s.value = SE_DEFAULTS.zone; return s;
+  });
+  se.source = seAdd("Seismic source type (Zone 4)", () => {
+    const s = document.createElement("select"); s.id = "se-source";
+    s.innerHTML = '<option value="A">A (max. capable M >= 7)</option><option value="B">B (M 5.5-7)</option><option value="C">C (M < 5.5)</option>';
+    s.value = SE_DEFAULTS.source; return s;
+  });
+  se.dist = seAdd("Distance to fault (km)", () => {
+    const i = document.createElement("input"); i.type = "number"; i.step = "any"; i.id = "se-dist"; i.value = SE_DEFAULTS.dist; return i;
+  });
+  se.sys = seAdd("Structural system (R, Ct)", () => {
+    const s = document.createElement("select"); s.id = "se-sys";
+    for (const [txt, r, ct] of SE_SYSTEMS) s.add(new Option(txt, r + "|" + ct));
+    return s;
+  });
+  se.r = seAdd("R (Table 208-11B)", () => {
+    const i = document.createElement("input"); i.type = "number"; i.step = "any"; i.id = "se-r"; i.value = SE_DEFAULTS.r; return i;
+  });
+  se.ct = seAdd("Ct (Eq. 208-12)", () => {
+    const i = document.createElement("input"); i.type = "number"; i.step = "any"; i.id = "se-ct"; i.value = SE_DEFAULTS.ct; return i;
+  });
+  se.hn = seAdd("Height to roof hn (m)", () => {
+    const i = document.createElement("input"); i.type = "number"; i.step = "any"; i.id = "se-hn"; i.value = SE_DEFAULTS.hn; return i;
+  });
+  se.t = seAdd("Period T (s) - blank = Ct * hn^0.75", () => {
+    const i = document.createElement("input"); i.type = "number"; i.step = "any"; i.id = "se-t"; i.value = SE_DEFAULTS.t; return i;
+  });
+  se.levels = seAdd("Story levels: hx (m)  wx (kN), bottom to top", () => {
+    const ta = document.createElement("textarea"); ta.id = "se-levels"; ta.value = SE_DEFAULTS.levels; return ta;
+  });
+  se.sys.addEventListener("change", () => {
+    const [r, ct] = se.sys.value.split("|");
+    if (r) { se.r.value = r; se.ct.value = ct; }
+  });
+  se.zone.addEventListener("change", () => {
+    const zone4 = se.zone.value === "4";
+    se.source.disabled = !zone4;
+    se.dist.disabled = !zone4;
+  });
+  se.zone.dispatchEvent(new Event("change"));
+}
+
+function levelTable(data) {
+  const t = document.createElement("table");
+  t.className = "ltab";
+  const sum = data.levels.reduce((a, l) => a + l.fx, 0);
+  t.innerHTML = "<tr><th>hx (m)</th><th>wx (kN)</th><th>wx*hx</th><th>Fx (kN)</th></tr>" +
+    data.levels.map(l => `<tr><td>${fmt(l.hx)}</td><td>${fmt(l.wx)}</td><td>${fmt(l.wxhx)}</td><td>${fmt(l.fx)}</td></tr>`).join("") +
+    `<tr><td></td><td>W = ${fmt(data.params.w_total)}</td><td></td><td>sum ${fmt(sum)}</td></tr>`;
+  return t;
+}
+function drawSpectrum(spec, p) {
+  const w = 640, h = 210, pl = 48, pr = 14, pt = 18, pb = 30;
+  const maxT = 3.0, maxSa = Math.max(...spec.map(s => s.sa), 1) * 1.08;
+  const X = t => pl + t / maxT * (w - pl - pr);
+  const Y = a => h - pb - a / maxSa * (h - pt - pb);
+  const pts = spec.map(s => X(s.t).toFixed(1) + "," + Y(s.sa).toFixed(1)).join(" ");
+  const tsX = X(p.ts).toFixed(1), tX = X(Math.min(p.t, maxT)).toFixed(1);
+  let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto" role="img" aria-label="design response spectrum">`;
+  svg += `<line x1="${pl}" y1="${h - pb}" x2="${w - pr}" y2="${h - pb}" stroke="#5b6b7a" stroke-width="1.5"/>`;
+  svg += `<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${h - pb}" stroke="#5b6b7a" stroke-width="1.5"/>`;
+  svg += `<polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2.5"/>`;
+  svg += `<line x1="${tsX}" y1="${pt}" x2="${tsX}" y2="${h - pb}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="5 4"/>`;
+  svg += `<text x="${+tsX + 4}" y="${pt + 10}" font-size="11" fill="#5b6b7a">Ts = ${fmt(p.ts)} s</text>`;
+  svg += `<line x1="${tX}" y1="${pt}" x2="${tX}" y2="${h - pb}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="3 3"/>`;
+  svg += `<text x="${+tX + 4}" y="${pt + 24}" font-size="11" fill="#dc2626">T = ${fmt(p.t)} s</text>`;
+  svg += `<text x="${w - pr - 34}" y="${h - 8}" font-size="11" fill="#5b6b7a">T (s)</text>`;
+  svg += `<text x="${pl - 6}" y="${pt + 4}" font-size="11" fill="#5b6b7a" text-anchor="end">Sa</text>`;
+  svg += `</svg>`;
+  const box = document.createElement("div");
+  box.className = "card";
+  box.style.marginTop = "12px";
+  box.innerHTML = svg;
+  return box;
+}
+function renderSeismic(data) {
+  const out = document.getElementById("seis-out");
+  out.hidden = false;
+  out.innerHTML = "";
+  const p = data.params, bs = data.base_shear;
+  const cards = [
+    ["Base shear V", fmt(bs.v) + " kN"], ["Branch", bs.branch],
+    ["Period T", fmt(p.t) + " s"], ["Ts", fmt(p.ts) + " s"],
+    ["W total", fmt(p.w_total) + " kN"], ["Ca", fmt(p.ca)], ["Cv", fmt(p.cv)],
+    ["Na / Nv", fmt(p.na) + " / " + fmt(p.nv)], ["I", fmt(p.i)], ["R", fmt(p.r)],
+    ["Ft", fmt(bs.ft) + " kN"], ["Ev", fmt(data.combos.ev) + " D"],
+  ];
+  const grid = document.createElement("div");
+  grid.className = "results fade";
+  for (const [k, v] of cards) {
+    const d = document.createElement("div"); d.className = "res";
+    const kd = document.createElement("div"); kd.className = "k"; kd.textContent = k;
+    const vd = document.createElement("div"); vd.className = "v"; vd.textContent = v;
+    d.appendChild(kd); d.appendChild(vd);
+    grid.appendChild(d);
+  }
+  out.appendChild(grid);
+  out.appendChild(drawSpectrum(data.spectrum, p));
+  out.appendChild(levelTable(data));
+  const steps = document.createElement("div");
+  steps.className = "steps";
+  out.appendChild(steps);
+  renderSteps(data, steps);
+}
+async function solveSeismic() {
+  const err = document.getElementById("err"); err.textContent = "";
+  const levels = [];
+  for (const line of se.levels.value.split("\\n")) {
+    const p = line.trim().split(/\s+/);
+    if (!p[0]) continue;
+    if (p.length !== 2 || !isFinite(+p[0]) || !isFinite(+p[1])) {
+      err.textContent = "Each level line needs: hx wx (numbers).";
+      return;
+    }
+    levels.push([+p[0], +p[1]]);
+  }
+  const t = se.t.value.trim();
+  const body = JSON.stringify({
+    zone: +se.zone.value, soil: se.soil.value, source: se.source.value,
+    distance: +se.dist.value, importance: +se.occ.value,
+    r: +se.r.value, ct: +se.ct.value, hn: +se.hn.value,
+    t: t === "" ? null : +t, levels,
+  });
+  try {
+    const res = await fetch("/seismic", {method: "POST", headers: {"Content-Type": "application/json"}, body});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "seismic failed");
+    renderSeismic(data);
+  } catch (e) {
+    err.textContent = "Error: " + e.message;
+  }
+}
+document.getElementById("solve-seis").addEventListener("click", solveSeismic);
+document.getElementById("reset-seis").addEventListener("click", () => {
+  buildSeismicForm();
+  document.getElementById("err").textContent = "";
+});
+buildSeismicForm();
 </script>
 </body>
 </html>
@@ -858,6 +1157,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"not found")
 
     def do_POST(self):
+        if self.path == "/seismic":
+            self._handle_seismic()
+            return
+        if self.path == "/steps":
+            self._handle_steps()
+            return
         if self.path != "/solve":
             self._send(404, "text/plain", b"not found")
             return
@@ -880,6 +1185,61 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("height, span, E, A and I must be positive")
                 body = json.dumps(solve_lframe(**vals, density=density)).encode("utf-8")
             self._send(200, "application/json", body)
+        except (KeyError, ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
+            self._send(400, "application/json",
+                       json.dumps({"error": str(exc)}).encode("utf-8"))
+
+    def _handle_seismic(self):
+        """NSCP 2015 Sec. 208.5 equivalent lateral force procedure (CE 152 M1)."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            levels = payload.get("levels")
+            if isinstance(levels, str):
+                rows = []
+                for line in levels.splitlines():
+                    parts = line.replace(",", " ").split()
+                    if not parts:
+                        continue
+                    if len(parts) != 2:
+                        raise ValueError("each level line must be 'hx wx'")
+                    rows.append([float(parts[0]), float(parts[1])])
+                levels = rows
+            if not isinstance(levels, list) or not levels:
+                raise ValueError("levels must be [hx, wx] pairs, bottom to top")
+            t = payload.get("t")
+            t = float(t) if t not in (None, "") else None
+            inp = SeismicInputs(
+                zone=int(payload["zone"]), soil=payload.get("soil", "SD"),
+                source=payload.get("source", "A"),
+                distance=float(payload.get("distance", 2.0)),
+                importance=float(payload.get("importance", 1.0)),
+                r=float(payload["r"]), ct=float(payload["ct"]), hn=float(payload["hn"]),
+                weights=[float(row[1]) for row in levels],
+                heights=[float(row[0]) for row in levels],
+                t=t,
+            )
+            self._send(200, "application/json", json.dumps(elf(inp)).encode("utf-8"))
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._send(400, "application/json",
+                       json.dumps({"error": str(exc)}).encode("utf-8"))
+
+    def _handle_steps(self):
+        """Step-by-step DSM solution (CE 152 Module 2) for the current frame."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            if "model" in payload:
+                frame, _, _, _, _, _ = _parse_model(payload["model"])
+            else:
+                vals = {}
+                for key in ("h", "l", "e", "a_col", "i_col", "a_beam", "i_beam", "w", "fx"):
+                    v = float(payload[key])
+                    if not math.isfinite(v):
+                        raise ValueError("values must be finite numbers")
+                    vals[key] = v
+                frame = build_lframe(**vals)
+            self._send(200, "application/json", json.dumps(solve_steps(frame)).encode("utf-8"))
         except (KeyError, ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
             self._send(400, "application/json",
                        json.dumps({"error": str(exc)}).encode("utf-8"))
@@ -918,9 +1278,9 @@ def _check():
     port = server.server_address[1]
     base = f"http://127.0.0.1:{port}"
 
-    def post(payload):
+    def post(payload, path="/solve"):
         req = urllib.request.Request(
-            base + "/solve", data=json.dumps(payload).encode(),
+            base + path, data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"})
         return urllib.request.urlopen(req)
 
@@ -956,6 +1316,29 @@ def _check():
 
     # page contains the tab markup
     assert b'id="tab-json"' in urllib.request.urlopen(base + "/").read()
+
+    # seismic endpoint: the CE 152 Module 1 worked example (Muntinlupa City)
+    res_s = json.loads(post({
+        "zone": 4, "soil": "SD", "source": "A", "distance": 2.0,
+        "importance": 1.0, "r": 8.5, "ct": 0.0731, "hn": 9.3,
+        "levels": [[3.2, 4400], [6.3, 5000], [9.3, 3000]],
+    }, path="/seismic").read())
+    assert abs(res_s["base_shear"]["v"] - 2407.06) < 0.1, "seismic V mismatch"
+    fx = [l["fx"] for l in res_s["levels"]]
+    assert abs(fx[0] - 461) < 1.5 and abs(fx[1] - 1032) < 1.5 and abs(fx[2] - 914) < 1.5, fx
+    assert len(res_s["steps"]) == 11 and all(s["latex"] and s["plain"] for s in res_s["steps"])
+    # zone 2: near-source factors are not applicable
+    res_z2 = json.loads(post({"zone": 2, "soil": "SC", "r": 3.5, "ct": 0.0853,
+                              "hn": 14.0, "levels": [[8.25, 1418.8], [5.55, 2173.9], [2.85, 2222.8]]},
+                             path="/seismic").read())
+    assert res_z2["params"]["na"] == 1.0 and res_z2["params"]["nv"] == 1.0
+    assert res_z2["params"]["ca"] == 0.24, "Ca(SC, Z=0.2) should be 0.24"
+
+    # steps endpoint: demo frame -> the 8-step DSM walk-through
+    res_t = json.loads(post(dict(DEFAULTS), path="/steps").read())
+    assert len(res_t["steps"]) == 8, [s["title"] for s in res_t["steps"]]
+    assert all(s["latex"] and s["plain"] for s in res_t["steps"])
+    assert abs(res_t["reactions"]["0"][2] - 110.2941900998947) < 1e-6
 
     # validation: missing key, bad span, bad member -> 400
     for bad in (

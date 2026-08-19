@@ -36,14 +36,12 @@ DEFAULTS = {
 }
 
 
-def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
-                 a_beam: float, i_beam: float, w: float, fx: float,
-                 density: float = 2.4) -> dict:
-    """Solve the propped L-frame; return reactions, member forces, equilibrium.
+def build_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
+                 a_beam: float, i_beam: float, w: float, fx: float) -> Frame:
+    """Build the demo propped L-frame as a solver Frame (single source of truth).
 
     Geometry: N1 (0,0) fixed; column up to N2 (0,h); beam to N3 (l,h) roller.
     Loads: UDL w on the beam, lateral push fx at N2. Units: kN, m.
-    density (t/m^3) feeds the lumped-mass mode shapes returned as "modes".
     """
     values = {
         "h": h, "l": l, "e": e, "a_col": a_col, "i_col": i_col,
@@ -53,8 +51,7 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         raise ValueError("all inputs must be finite numbers")
     if any(values[k] <= 0 for k in ("h", "l", "e", "a_col", "i_col", "a_beam", "i_beam")):
         raise ValueError("height, span, E, A and I must be positive")
-
-    frame = Frame(
+    return Frame(
         nodes=[Node(0.0, 0.0), Node(0.0, h), Node(l, h)],
         members=[
             Member(0, 1, Section(E=e, A=a_col, I=i_col)),
@@ -64,6 +61,16 @@ def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
         nodal_loads={1: NodalLoad(fx=fx)},
         member_loads={1: [UDL(w=w)]},
     )
+
+
+def solve_lframe(h: float, l: float, e: float, a_col: float, i_col: float,
+                 a_beam: float, i_beam: float, w: float, fx: float,
+                 density: float = 2.4) -> dict:
+    """Solve the propped L-frame; return reactions, member forces, equilibrium.
+
+    density (t/m^3) feeds the lumped-mass mode shapes returned as "modes".
+    """
+    frame = build_lframe(h, l, e, a_col, i_col, a_beam, i_beam, w, fx)
     sol = solve(frame)
     try:
         from solver.modal import mode_shapes

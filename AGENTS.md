@@ -16,6 +16,12 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   lumped cantilever / SS-beam frequencies). Note: lumped masses underestimate
   the continuous-beam fundamental by ~30% for cantilevers - fine for shapes,
   document the model when frequencies matter.
+- `solver/steps.py`: step-by-step Direct Stiffness Method walk-through in
+  LaTeX+plain twins (`solve_steps(frame)` -> 8 steps: model/dofs, per-element
+  k_local/k_global (+ fixed-end forces for UDLs), assembled K, load vector,
+  reduced system, displacements, reactions). Full matrices are rendered only
+  for small frames (<= 12 global dofs, <= 10x10 reduced). Self-check:
+  `python3 -m solver.steps` (re-verifies against solve()).
 - API contract: build a `Frame` (nodes, members, sections, supports, loads), call `solve(frame)`, read `Solution.u` (displacements), `.reactions` (dict node -> (rx, ry, mz)), `.member_forces` (local end forces, acting ON the member).
 - Units contract (mandatory): forces kN, lengths m, E in kN/m^2 (1 MPa = 1000 kN/m^2), A in m^2, I in m^4, UDL in kN/m. See solver/__init__.py.
 - UDL w is positive downward (local -y). Member end forces reported are forces on the member; flip sign for forces on joints.
@@ -24,7 +30,21 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## GUIs (gui/)
 
 - `frame_gui.py`: FreeSimpleGUI desktop frontend for the demo propped L-frame; `solve_lframe()` is the single source of truth for that frame model and returns reactions, member forces, node coords, raw displacements, w, fx.
-- `web_app.py`: browser frontend (stdlib http.server only, embedded HTML/SVG/JS) reusing `solve_lframe`; two tabs - demo L-frame inputs and a generic JSON model (`solve_model`: any nodes/members/supports/loads, returns a JSON-safe result with a global equilibrium check; UDL total force = w*(dy,-dx)). Both responses carry a `modes` list [{freq, u}] (lumped-mass modal, density passed per request, default 2.4 t/m^3). The page adds a deformation slider + sweep play button, drag-to-load arrows (delta-per-pixel: fx/fy 1 kN/px, mz 2 kN*m/px, UDL 0.5 kN/m per px), and M1-M3 mode buttons that animate the mode shapes (harmonic motion, loads hidden). `--check` runs both paths through the real HTTP handler headlessly.
+- `web_app.py`: browser frontend (stdlib http.server only, embedded HTML/SVG/JS)
+  reusing `solve_lframe`; three tabs - demo L-frame inputs, a generic JSON model
+  (`solve_model`: any nodes/members/supports/loads, returns a JSON-safe result
+  with a global equilibrium check; UDL total force = w*(dy,-dx)), and a seismic
+  loads tab (`/seismic` -> `elf()`, CE 152 M1: parameters, spectrum plot, story
+  forces, 11 LaTeX steps). Both frame responses carry a `modes` list [{freq, u}]
+  (lumped-mass modal, density passed per request, default 2.4 t/m^3). The page
+  adds a deformation slider + sweep play button, drag-to-load arrows
+  (delta-per-pixel: fx/fy 1 kN/px, mz 2 kN*m/px, UDL 0.5 kN/m per px), M1-M3
+  mode buttons that animate the mode shapes (harmonic motion, loads hidden), and
+  a Steps button (`/steps` -> `solve_steps()`, CE 152 M2). LaTeX renders via
+  KaTeX from a CDN with a plain-text fallback when offline. `_parse_model` is the
+  single parser for both /solve and /steps; `build_lframe` (gui/frame_gui.py)
+  is the single source of truth for the demo L-frame. `--check` runs both frame
+  paths, /seismic (lecture example), /steps, and the validation 400s headlessly.
 - JSON-tab drags mutate a JS-side `jsonModel` (synced to the textarea on pointerup); the textarea input event invalidates it. The SS-beam preset uses 3 nodes (a 2-node lumped model would lump all bending mass onto restrained supports and show only axial modes).
 
 ## Excel bridge (bridge/)
@@ -45,6 +65,19 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Rebar table is SI diameters (10-36 mm) in `design/flexure.py:BAR_DIAMETERS_MM`.
 - Python 3.9: no `X | None` annotations without `from __future__ import annotations`; builtin generics (`tuple[...]`) are fine.
 - Sanity check: `python3 -m design.sanity_check` from the repo root.
+
+## Seismic loads (seismic/)
+
+- `seismic/nscp2015.py`: NSCP 2015 Sec. 208.5 equivalent lateral force (ELF)
+  procedure, CE 152 Module 1. `elf(SeismicInputs)` returns params (S, Z,
+  Na/Nv, Ca/Cv, I, R, T, Ts), base shear (both spectrum branches + minimums),
+  vertical force distribution, load combos (Ev = 0.5 Ca I D; U1/U2 gravity
+  coefficients), spectrum points, and 11 LaTeX+plain steps. Tables 208-1/2/3/5/6/7/8,
+  208-11B, Eq. 208-12/15 embedded; near-source factors = UBC-97 Tables 16-S/16-T
+  (Zone 4 only, source A/B/C by distance; Zone 2 forces Na=Nv=1.0). T defaults
+  to Ct*hn^0.75, override with the actual/modal period. Self-check:
+  `python3 -m seismic.nscp2015` (Muntinlupa example: V = 2407 kN,
+  F = [461, 1032, 914] kN, Ev = 0.33D).
 
 ## Maintaining this file
 
